@@ -4,6 +4,7 @@ data
 dist
 .runtime
 .codex
+构建V2单文件安装器.bat
 *.log
 coverage
 output
