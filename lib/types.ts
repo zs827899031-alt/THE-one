@@ -6,16 +6,23 @@ export type JobItemStatus = "queued" | "processing" | "completed" | "failed";
 
 export type JobItemReviewStatus = "unreviewed" | "shortlisted" | "approved" | "rejected";
 
-export type CreationMode = "standard" | "reference-remix" | "prompt";
+export type CreationMode = "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
 export type ReferenceStrength = "reference" | "balanced" | "product";
 
 export type ImageType =
   | "scene"
+  | "main-image"
+  | "lifestyle"
   | "white-background"
   | "model"
   | "poster"
   | "detail"
-  | "pain-point";
+  | "pain-point"
+  | "feature-overview"
+  | "material-craft"
+  | "size-spec"
+  | "multi-scene"
+  | "culture-value";
 
 export interface SelectOption {
   value: string;
@@ -48,6 +55,11 @@ export interface FeishuFieldMapping {
   prompt?: string;
   negativePrompt?: string;
   status?: string;
+  typeSummary?: string;
+  ratioSummary?: string;
+  resolutionSummary?: string;
+  sizeSummary?: string;
+  statusSummary?: string;
   mode?: string;
   platform?: string;
   country?: string;
@@ -73,6 +85,8 @@ export interface LocalizedCreativeInputs {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
 }
 
 export interface ReferenceTextZone {
@@ -129,12 +143,26 @@ export interface ProviderDebugInfo {
   actualHeight?: number;
 }
 
+export interface JobPreviewAsset {
+  id: string;
+  jobItemId: string;
+  imageType: ImageType;
+  ratio: string;
+  resolutionLabel: string;
+  originalName: string;
+  width: number | null;
+  height: number | null;
+}
+
 export interface JobRecord {
   id: string;
   status: JobStatus;
   creationMode: CreationMode;
   referenceStrength: ReferenceStrength;
   preserveReferenceText: boolean;
+  generatedCount: number;
+  succeededCount: number;
+  failedCount: number;
   productName: string;
   sku: string;
   category: string;
@@ -167,6 +195,10 @@ export interface JobRecord {
   referencePosterCopyOverride: ReferencePosterCopy | null;
   referenceLayoutAnalysis: ReferenceLayoutAnalysis | null;
   referencePosterCopy: ReferencePosterCopy | null;
+  feishuRecordId: string | null;
+  feishuFileTokens: string[];
+  previewAssets: JobPreviewAsset[];
+  previewImageCount: number;
 }
 
 export interface JobItemRecord {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { parseFeishuFieldMapping, testFeishuConnection } from "@/lib/feishu";
+import { parseFeishuFieldMapping } from "@/lib/feishu-field-mapping";
+import { testFeishuConnection } from "@/lib/feishu";
 import type { AppSettings } from "@/lib/types";
 
 export const runtime = "nodejs";

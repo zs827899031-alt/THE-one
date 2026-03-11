@@ -40,14 +40,26 @@ export async function POST(request: Request) {
           language: payload.uiLanguage === "zh" ? "zh-CN" : payload.language || "en-US",
           platform: payload.uiLanguage === "zh" ? "tmall" : payload.platform || "amazon",
           selectedTypes: ["scene"],
-          selectedResolutions:
-            payload.selectedResolutions?.filter((value) => value !== "512px").length
-              ? payload.selectedResolutions.filter((value) => value !== "512px")
-              : ["4K"],
+          selectedResolutions: payload.selectedResolutions?.length ? payload.selectedResolutions : ["4K"],
           selectedTemplateOverrides: {},
           includeCopyLayout: false,
           preserveReferenceText: payload.preserveReferenceText ?? true,
         }
+      : payload.creationMode === "suite"
+        ? {
+            ...payload,
+            selectedTypes: ["main-image", "lifestyle", "feature-overview", "scene", "material-craft", "size-spec"],
+            includeCopyLayout: false,
+            selectedTemplateOverrides: {},
+          }
+      : payload.creationMode === "amazon-a-plus"
+        ? {
+            ...payload,
+            platform: "amazon",
+            selectedTypes: ["poster", "feature-overview", "multi-scene", "detail", "size-spec", "culture-value"],
+            includeCopyLayout: false,
+            selectedTemplateOverrides: {},
+          }
       : payload.creationMode === "prompt"
         ? {
             ...payload,
@@ -56,12 +68,24 @@ export async function POST(request: Request) {
       : payload;
 
   if (
-    (effectivePayload.creationMode !== "prompt" && !effectivePayload.productName) ||
+    (effectivePayload.creationMode === "standard" && !effectivePayload.productName?.trim()) ||
     !effectivePayload.selectedTypes?.length ||
     !effectivePayload.selectedRatios?.length ||
     !effectivePayload.selectedResolutions?.length
   ) {
     return NextResponse.json({ error: "Please complete the required fields." }, { status: 400 });
+  }
+
+  if (
+    effectivePayload.creationMode === "suite" &&
+    (
+      !effectivePayload.category?.trim() ||
+      !effectivePayload.sellingPoints?.trim() ||
+      !effectivePayload.materialInfo?.trim() ||
+      !effectivePayload.sizeInfo?.trim()
+    )
+  ) {
+    return NextResponse.json({ error: "Image set mode requires category name, selling points, material, and size details." }, { status: 400 });
   }
 
   if (effectivePayload.creationMode === "prompt" && !effectivePayload.customPrompt?.trim()) {

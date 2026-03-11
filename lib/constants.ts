@@ -89,6 +89,16 @@ export const PRODUCT_CATEGORIES: SelectOption[] = [
 
 export const IMAGE_TYPE_OPTIONS: Array<SelectOption & { value: ImageType }> = [
   {
+    value: "main-image",
+    label: { zh: "主图", en: "Main image" },
+    description: { zh: "整套图中的主视觉商品主图", en: "Primary hero image for a product image set" },
+  },
+  {
+    value: "lifestyle",
+    label: { zh: "生活方式", en: "Lifestyle" },
+    description: { zh: "展示产品融入生活场景的使用感", en: "Show the product inside an aspirational lifestyle context" },
+  },
+  {
     value: "scene",
     label: { zh: "场景图", en: "Lifestyle scene" },
     description: { zh: "把商品放进真实使用场景", en: "Place the product in a realistic lifestyle scene" },
@@ -118,25 +128,60 @@ export const IMAGE_TYPE_OPTIONS: Array<SelectOption & { value: ImageType }> = [
     label: { zh: "痛点图", en: "Pain-point image" },
     description: { zh: "围绕问题与解决方案构图", en: "Sell through pain-point to solution storytelling" },
   },
+  {
+    value: "feature-overview",
+    label: { zh: "卖点总览", en: "Feature overview" },
+    description: { zh: "集中展示核心卖点与亮点结构", en: "Summarize the product's main benefits in one overview visual" },
+  },
+  {
+    value: "material-craft",
+    label: { zh: "材质工艺", en: "Material & craft" },
+    description: { zh: "突出材质、纹理、工艺和做工细节", en: "Highlight material, texture, finish, and craftsmanship details" },
+  },
+  {
+    value: "size-spec",
+    label: { zh: "尺寸参数", en: "Size spec" },
+    description: { zh: "展示尺寸、规格和关键参数", en: "Present dimensions, measurements, and spec highlights clearly" },
+  },
+  {
+    value: "multi-scene",
+    label: { zh: "多场景应用", en: "Multi-scene usage" },
+    description: { zh: "展示产品在多个生活场景中的使用方式", en: "Show how the product works across multiple usage scenarios" },
+  },
+  {
+    value: "culture-value",
+    label: { zh: "文化价值", en: "Cultural value" },
+    description: { zh: "传递品牌气质、情感价值和生活方式认同", en: "Express the product's emotional, cultural, or lifestyle value" },
+  },
 ];
 
 export const ASPECT_RATIOS: SelectOption[] = [
-  { value: "1:1", label: { zh: "1:1 方图", en: "1:1 Square" } },
-  { value: "4:5", label: { zh: "4:5 竖图", en: "4:5 Portrait" } },
-  { value: "3:4", label: { zh: "3:4 竖图", en: "3:4 Portrait" } },
-  { value: "16:9", label: { zh: "16:9 横图", en: "16:9 Landscape" } },
+  { value: "1:1", label: { zh: "1:1", en: "1:1 Square" } },
+  { value: "1:4", label: { zh: "1:4 长竖", en: "1:4 Ultra-tall" } },
+  { value: "1:8", label: { zh: "1:8 超竖", en: "1:8 Banner portrait" } },
+  { value: "3:2", label: { zh: "3:2 横", en: "3:2 Landscape" } },
+  { value: "2:3", label: { zh: "2:3 竖", en: "2:3 Portrait" } },
+  { value: "3:4", label: { zh: "3:4 竖", en: "3:4 Portrait" } },
+  { value: "4:1", label: { zh: "4:1 超横", en: "4:1 Ultra-wide" } },
+  { value: "4:3", label: { zh: "4:3 横", en: "4:3 Landscape" } },
+  { value: "4:5", label: { zh: "4:5 竖", en: "4:5 Portrait" } },
+  { value: "5:4", label: { zh: "5:4 横", en: "5:4 Landscape" } },
+  { value: "8:1", label: { zh: "8:1 超横", en: "8:1 Banner" } },
   { value: "9:16", label: { zh: "9:16 竖屏", en: "9:16 Vertical" } },
+  { value: "16:9", label: { zh: "16:9 横屏", en: "16:9 Landscape" } },
+  { value: "21:9", label: { zh: "21:9 宽屏", en: "21:9 Cinematic" } },
+  { value: "9:21", label: { zh: "9:21 竖屏", en: "9:21 Cinematic portrait" } },
 ];
 
 export const RESOLUTIONS: SelectOption[] = [
-  { value: "512px", label: { zh: "512px", en: "512px" } },
+  { value: "0.5K", label: { zh: "0.5K", en: "0.5K" } },
   { value: "1K", label: { zh: "1K", en: "1K" } },
   { value: "2K", label: { zh: "2K", en: "2K" } },
   { value: "4K", label: { zh: "4K", en: "4K" } },
 ];
 
 export const UI_LANGUAGE_OPTIONS: SelectOption[] = [
-  { value: "zh", label: { zh: "中文", en: "中文" } },
+  { value: "zh", label: { zh: "简体中文", en: "Simplified Chinese" } },
   { value: "en", label: { zh: "English", en: "English" } },
 ];
 

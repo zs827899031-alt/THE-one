@@ -68,6 +68,16 @@ const platformStyles: Record<string, { tone: string; palette: string; layout: st
 };
 
 const imageTypeGuides: Record<ImageType, { intent: string; extraPrompt: string; copyFocus: string }> = {
+  "main-image": {
+    intent: "Create a polished hero image that serves as the lead visual for a complete product image set.",
+    extraPrompt: "Use a clean hero composition with exact product accuracy, strong focal hierarchy, and marketplace-friendly clarity.",
+    copyFocus: "Introduce the product with its clearest value proposition and strongest first impression.",
+  },
+  lifestyle: {
+    intent: "Show the product inside an aspirational lifestyle setup that feels natural and believable.",
+    extraPrompt: "Build a tasteful lifestyle environment with human context, premium light, and a clear connection between the product and daily life.",
+    copyFocus: "Connect the product to a desirable lifestyle or usage moment.",
+  },
   scene: {
     intent: "Show the product naturally used inside a realistic context.",
     extraPrompt: "Build a believable scene around the product with commercial lighting and a clear hero focus.",
@@ -97,6 +107,31 @@ const imageTypeGuides: Record<ImageType, { intent: string; extraPrompt: string; 
     intent: "Tell a before-vs-after or problem-vs-solution story.",
     extraPrompt: "Show a pain point clearly, then position the product as the hero solution without clutter.",
     copyFocus: "Anchor on user frustration and the product outcome.",
+  },
+  "feature-overview": {
+    intent: "Build a clean feature-summary creative that introduces the product's main selling points in one frame.",
+    extraPrompt: "Use a structured overview layout with one clear hero product and concise feature callouts that are easy to scan.",
+    copyFocus: "Summarize the strongest product benefits in a compact comparison-style layout.",
+  },
+  "material-craft": {
+    intent: "Focus on the material quality, finish, structural detail, and craftsmanship of the product.",
+    extraPrompt: "Use crisp close-up framing, texture-led lighting, and tidy annotation logic to make material and craftsmanship feel premium and trustworthy.",
+    copyFocus: "Explain why the material and construction quality matter.",
+  },
+  "size-spec": {
+    intent: "Present dimensions, measurements, and key specifications in a clear e-commerce explainer graphic.",
+    extraPrompt: "Keep the product accurate and readable while adding dimension lines, spec labels, and tidy measurement hierarchy.",
+    copyFocus: "Translate size, dimensions, and key specs into clear shopping information.",
+  },
+  "multi-scene": {
+    intent: "Show the product used naturally across multiple real-life scenarios inside one A+ style module.",
+    extraPrompt: "Compose 2 to 4 distinct lifestyle moments or usage contexts in one coherent visual module while keeping the product identity exact.",
+    copyFocus: "Demonstrate how the product fits different everyday use cases.",
+  },
+  "culture-value": {
+    intent: "Communicate the product's emotional, cultural, or lifestyle value beyond raw specifications.",
+    extraPrompt: "Use editorial storytelling, premium atmosphere, and symbolic lifestyle cues to express taste, identity, or emotional resonance.",
+    copyFocus: "Frame the product as part of a desirable lifestyle or value system.",
   },
 };
 
@@ -131,6 +166,44 @@ export function getImageTypeGuide(imageType: ImageType) {
   return imageTypeGuides[imageType];
 }
 
+function normalizePromptText(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizePromptCategory(category?: string | null) {
+  const trimmed = normalizePromptText(category);
+  if (!trimmed || trimmed === "general") {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function buildPromptFactLine(facts: Array<[label: string, value?: string | null]>) {
+  const parts = facts.flatMap(([label, value]) => {
+    const normalized = normalizePromptText(value);
+    return normalized ? [`${label}: ${normalized}`] : [];
+  });
+
+  return parts.length ? `${parts.join(". ")}.` : null;
+}
+
+function buildSimplifiedChineseOnlyLine(language: string) {
+  return language.toLowerCase().startsWith("zh")
+    ? "If any Chinese copy appears anywhere in the output, use Simplified Chinese only. Do not use Traditional Chinese."
+    : null;
+}
+
+function buildRestrictionsLine(restrictions?: string | null) {
+  return buildPromptFactLine([["Restrictions", restrictions]]);
+}
+
+function buildReferenceSlotTextLine(label: string, value?: string | null) {
+  const normalized = normalizePromptText(value);
+  return normalized ? `${label}: ${normalized}.` : null;
+}
+
 function buildTemplateOverrideLines(template?: TemplateRecord | null) {
   if (!template) {
     return [];
@@ -151,12 +224,115 @@ function buildBrandOverrideLines(brandProfile?: BrandRecord | null) {
   }
 
   return [
-    `Brand profile: ${brandProfile.name}.`,
-    `Brand primary color: ${brandProfile.primaryColor || "Not specified"}.`,
-    `Brand tone: ${brandProfile.tone || "Not specified"}.`,
-    `Brand banned terms: ${brandProfile.bannedTerms || "None specified"}.`,
-    `Brand guidance: ${brandProfile.promptGuidance || "Keep brand expression consistent and clean."}`,
-  ];
+    buildPromptFactLine([["Brand profile", brandProfile.name]]),
+    buildPromptFactLine([["Brand primary color", brandProfile.primaryColor]]),
+    buildPromptFactLine([["Brand tone", brandProfile.tone]]),
+    buildPromptFactLine([["Brand banned terms", brandProfile.bannedTerms]]),
+    buildPromptFactLine([["Brand guidance", brandProfile.promptGuidance]]),
+  ].filter(Boolean);
+}
+
+const SELLING_POINT_IMAGE_TYPES = new Set<ImageType>(["feature-overview", "pain-point"]);
+const MATERIAL_IMAGE_TYPES = new Set<ImageType>(["material-craft"]);
+const SIZE_IMAGE_TYPES = new Set<ImageType>(["size-spec"]);
+const IMPERIAL_PRIMARY_COUNTRIES = new Set(["US"]);
+
+function shouldIncludeSellingPoints(imageType: ImageType) {
+  return SELLING_POINT_IMAGE_TYPES.has(imageType);
+}
+
+function shouldIncludeMaterialInfo(imageType: ImageType) {
+  return MATERIAL_IMAGE_TYPES.has(imageType);
+}
+
+function shouldIncludeSizeInfo(imageType: ImageType) {
+  return SIZE_IMAGE_TYPES.has(imageType);
+}
+
+function formatMeasurementNumber(value: number) {
+  const fixed = value >= 10 ? value.toFixed(1) : value.toFixed(2);
+  return fixed.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+}
+
+function buildDualMeasurementReference(sizeInfo?: string | null) {
+  const normalized = normalizePromptText(sizeInfo);
+  if (!normalized) {
+    return null;
+  }
+
+  const tokens = Array.from(
+    normalized.matchAll(/(\d+(?:\.\d+)?)\s*(mm|cm|m|inches|inch|in|ft|feet|kg|kgs|g|grams|gram|lb|lbs|oz|ounce|ounces)\b/gi),
+  );
+
+  if (!tokens.length) {
+    return null;
+  }
+
+  const converted = tokens
+    .map((match) => {
+      const value = Number(match[1]);
+      const unit = match[2].toLowerCase();
+
+      if (!Number.isFinite(value)) {
+        return null;
+      }
+
+      if (unit === "mm") {
+        return `${formatMeasurementNumber(value)} mm (${formatMeasurementNumber(value / 25.4)} in)`;
+      }
+      if (unit === "cm") {
+        return `${formatMeasurementNumber(value)} cm (${formatMeasurementNumber(value / 2.54)} in)`;
+      }
+      if (unit === "m") {
+        return `${formatMeasurementNumber(value)} m (${formatMeasurementNumber(value * 3.28084)} ft)`;
+      }
+      if (["inch", "inches", "in"].includes(unit)) {
+        return `${formatMeasurementNumber(value)} in (${formatMeasurementNumber(value * 2.54)} cm)`;
+      }
+      if (["ft", "feet"].includes(unit)) {
+        return `${formatMeasurementNumber(value)} ft (${formatMeasurementNumber(value * 30.48)} cm)`;
+      }
+      if (["kg", "kgs"].includes(unit)) {
+        return `${formatMeasurementNumber(value)} kg (${formatMeasurementNumber(value * 2.20462)} lb)`;
+      }
+      if (["g", "gram", "grams"].includes(unit)) {
+        return `${formatMeasurementNumber(value)} g (${formatMeasurementNumber(value / 28.3495)} oz)`;
+      }
+      if (["lb", "lbs"].includes(unit)) {
+        return `${formatMeasurementNumber(value)} lb (${formatMeasurementNumber(value / 2.20462)} kg)`;
+      }
+      if (["oz", "ounce", "ounces"].includes(unit)) {
+        return `${formatMeasurementNumber(value)} oz (${formatMeasurementNumber(value * 28.3495)} g)`;
+      }
+
+      return null;
+    })
+    .filter((value): value is string => Boolean(value));
+
+  return converted.length ? converted.join(" · ") : null;
+}
+
+function buildMeasurementPresentationLines(input: { country: string; sizeInfo?: string | null }) {
+  if (!shouldIncludeSizeInfo("size-spec")) {
+    return [];
+  }
+
+  const normalized = normalizePromptText(input.sizeInfo);
+  if (!normalized) {
+    return [];
+  }
+
+  const primarySystem = IMPERIAL_PRIMARY_COUNTRIES.has(input.country) ? "imperial" : "metric";
+  const dualReference = buildDualMeasurementReference(normalized);
+
+  return [
+    `Raw size and weight information: ${normalized}.`,
+    dualReference ? `Dual-unit reference: ${dualReference}.` : null,
+    primarySystem === "imperial"
+      ? "For size/spec visuals, present imperial units first and metric units in parentheses whenever dimensions or weight are shown."
+      : "For size/spec visuals, present metric units first and imperial units in parentheses whenever dimensions or weight are shown.",
+    "If the operator provided both dimensions and weight, keep both in the size/spec module only. Do not move these measurements into other image types.",
+  ].filter(Boolean);
 }
 
 export function buildCopyPrompt(input: {
@@ -170,6 +346,8 @@ export function buildCopyPrompt(input: {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
   imageType: ImageType;
   ratio: string;
   resolutionLabel: string;
@@ -178,25 +356,54 @@ export function buildCopyPrompt(input: {
   const countryLabel = COUNTRIES.find((item) => item.value === input.country)?.label.en ?? input.country;
   const languageLabel = OUTPUT_LANGUAGES.find((item) => item.value === input.language)?.label.en ?? input.language;
   const platformLabel = PLATFORMS.find((item) => item.value === input.platform)?.label.en ?? input.platform;
-  const categoryLabel = PRODUCT_CATEGORIES.find((item) => item.value === input.category)?.label.en ?? input.category;
+  const categoryKey = normalizePromptCategory(input.category);
+  const categoryLabel = categoryKey ? PRODUCT_CATEGORIES.find((item) => item.value === categoryKey)?.label.en ?? categoryKey : null;
   const imageGuide = getImageTypeGuide(input.imageType);
   const platformGuide = getPlatformStyle(input.platform);
+  const sellingPoints = shouldIncludeSellingPoints(input.imageType) ? input.sellingPoints : "";
+  const materialInfo = shouldIncludeMaterialInfo(input.imageType) ? input.materialInfo : "";
+  const sizeInfo = shouldIncludeSizeInfo(input.imageType) ? input.sizeInfo : "";
+  const scopeLine = [`Target market: ${countryLabel}`, `Output language: ${languageLabel}`];
+  if (categoryLabel) {
+    scopeLine.push(`Category: ${categoryLabel}`);
+  }
 
   return [
     `You are an expert e-commerce creative strategist for ${platformLabel}.`,
-    `Target market: ${countryLabel}. Output language: ${languageLabel}. Category: ${categoryLabel}.`,
-    `Product name: ${input.productName}. Brand: ${input.brandName || "Not specified"}.`,
+    `${scopeLine.join(". ")}.`,
+    buildSimplifiedChineseOnlyLine(input.language),
+    buildPromptFactLine([
+      ["Product name", input.productName],
+      ["Brand", input.brandName],
+    ]),
     ...buildBrandOverrideLines(input.brandProfile),
-    `Selling points: ${input.sellingPoints || "Not provided"}.`,
-    `Additional notes: ${input.sourceDescription || "Not provided"}.`,
-    `Restrictions: ${input.restrictions || "Avoid hallucinating logos, text, and unsupported claims."}.`,
+    buildPromptFactLine([["Selling points", sellingPoints]]),
+    buildPromptFactLine([["Additional notes", input.sourceDescription]]),
+    buildPromptFactLine([["Material information", materialInfo]]),
+    buildPromptFactLine([["Size and weight information", sizeInfo]]),
+    ...buildMeasurementPresentationLines({
+      country: input.country,
+      sizeInfo,
+    }),
+    shouldIncludeMaterialInfo(input.imageType)
+      ? "Material notes belong only in this material-focused module. Do not turn them into unrelated selling-point copy."
+      : "Do not mention material information in this image type unless it is visually obvious from the product itself.",
+    shouldIncludeSizeInfo(input.imageType)
+      ? "Size and weight details belong only in this size/spec module."
+      : "Do not mention size, dimensions, or weight in this image type.",
+    shouldIncludeSellingPoints(input.imageType)
+      ? "Use the operator's selling points as the primary copy source for this feature-focused module."
+      : "Do not force the operator's selling-point list into this image type.",
+    buildRestrictionsLine(input.restrictions),
     `Creative goal: ${imageGuide.intent}`,
     `Platform tone: ${platformGuide.tone}. Platform palette: ${platformGuide.palette}.`,
     `Composition ratio: ${input.ratio}. Target resolution bucket: ${input.resolutionLabel}.`,
     `Copy focus: ${imageGuide.copyFocus}`,
     ...buildTemplateOverrideLines(input.template),
     "Return concise, conversion-focused copy that is platform-appropriate and avoids prohibited claims.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildImagePrompt(input: {
@@ -210,6 +417,8 @@ export function buildImagePrompt(input: {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
   imageType: ImageType;
   ratio: string;
   resolutionLabel: string;
@@ -218,22 +427,51 @@ export function buildImagePrompt(input: {
 }): string {
   const imageGuide = getImageTypeGuide(input.imageType);
   const platformGuide = getPlatformStyle(input.platform);
+  const categoryKey = normalizePromptCategory(input.category);
+  const categoryLabel = categoryKey ? PRODUCT_CATEGORIES.find((item) => item.value === categoryKey)?.label.en ?? categoryKey : null;
+  const scopedSellingPoints = shouldIncludeSellingPoints(input.imageType) ? input.sellingPoints : "";
+  const scopedMaterialInfo = shouldIncludeMaterialInfo(input.imageType) ? input.materialInfo : "";
+  const scopedSizeInfo = shouldIncludeSizeInfo(input.imageType) ? input.sizeInfo : "";
+  const highlightText = normalizePromptText(scopedSellingPoints) || normalizePromptText(input.copy.highlights.join(", "));
 
   return [
     `Edit the provided product image for a ${input.platform} listing in ${input.language} for market ${input.country}.`,
     "Keep the product identity, silhouette, materials, and recognizable shape consistent with the source image.",
+    buildSimplifiedChineseOnlyLine(input.language),
     ...buildBrandOverrideLines(input.brandProfile),
     `Image type: ${input.imageType}. ${imageGuide.extraPrompt}`,
     `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} level fidelity.`,
     `Visual tone: ${platformGuide.tone}. Palette: ${platformGuide.palette}. Layout feel: ${platformGuide.layout}.`,
-    `Core product highlights: ${input.sellingPoints || input.copy.highlights.join(", ")}.`,
-    `Additional product notes: ${input.sourceDescription || "Not provided."}.`,
+    buildPromptFactLine([
+      ["Product name", input.productName],
+      ["Brand", input.brandName],
+      ["Category", categoryLabel],
+    ]),
+    buildPromptFactLine([["Core product highlights", highlightText]]),
+    buildPromptFactLine([["Additional product notes", input.sourceDescription]]),
+    buildPromptFactLine([["Material information", scopedMaterialInfo]]),
+    buildPromptFactLine([["Size and weight information", scopedSizeInfo]]),
+    ...buildMeasurementPresentationLines({
+      country: input.country,
+      sizeInfo: scopedSizeInfo,
+    }),
+    shouldIncludeMaterialInfo(input.imageType)
+      ? "Use the provided material details only inside this material-focused image."
+      : "Do not display material copy in this image type.",
+    shouldIncludeSizeInfo(input.imageType)
+      ? "Use the provided size and weight details only inside this size/spec image."
+      : "Do not display dimensions or weight in this image type.",
+    shouldIncludeSellingPoints(input.imageType)
+      ? "Use the provided selling points only in this feature-focused image."
+      : "Do not inject the operator's selling-point text into this image type.",
     `Poster headline guidance: ${input.copy.posterHeadline}. Supporting subline: ${input.copy.posterSubline}.`,
     `Do not invent extra products, avoid distorted hands, avoid broken packaging, avoid unreadable text, avoid brand misuse.`,
-    `Restrictions: ${input.restrictions || "No unsupported logos, pricing, or medical claims."}.`,
+    buildRestrictionsLine(input.restrictions),
     ...buildTemplateOverrideLines(input.template),
     `Optimized creative direction: ${input.copy.optimizedPrompt}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildPromptModePrompt(input: {
@@ -255,18 +493,25 @@ export function buildPromptModePrompt(input: {
 }) {
   const imageGuide = getImageTypeGuide(input.imageType);
   const platformGuide = getPlatformStyle(input.platform);
+  const categoryKey = normalizePromptCategory(input.category);
+  const categoryLabel = categoryKey ? PRODUCT_CATEGORIES.find((item) => item.value === categoryKey)?.label.en ?? categoryKey : null;
 
   return [
     `Edit the provided product image for a ${input.platform} listing in ${input.language} for market ${input.country}.`,
     "Keep the product identity, silhouette, materials, label placement, and recognizable shape consistent with the source image.",
+    buildSimplifiedChineseOnlyLine(input.language),
     ...buildBrandOverrideLines(input.brandProfile),
     `Preferred image type: ${input.imageType}. ${imageGuide.extraPrompt}`,
     `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} level fidelity.`,
     `Visual tone: ${platformGuide.tone}. Palette: ${platformGuide.palette}. Layout feel: ${platformGuide.layout}.`,
-    `Product name: ${input.productName}. Brand: ${input.brandName || "Not specified"}. Category: ${input.category}.`,
-    `Selling points: ${input.sellingPoints || "Not provided"}.`,
-    `Additional notes: ${input.sourceDescription || "Not provided"}.`,
-    `Restrictions: ${input.restrictions || "No unsupported logos, pricing, or medical claims."}.`,
+    buildPromptFactLine([
+      ["Product name", input.productName],
+      ["Brand", input.brandName],
+      ["Category", categoryLabel],
+    ]),
+    buildPromptFactLine([["Selling points", input.sellingPoints]]),
+    buildPromptFactLine([["Additional notes", input.sourceDescription]]),
+    buildRestrictionsLine(input.restrictions),
     `User creative prompt: ${input.customPrompt}`,
     input.customNegativePrompt?.trim()
       ? `Avoid these outcomes: ${input.customNegativePrompt.trim()}`
@@ -324,9 +569,12 @@ export function buildReferenceRemakePrompt(input: {
   const callouts = nonEmptyList(input.remakeCopy.callouts);
   const props = nonEmptyList(input.referenceLayout.supportingProps);
   const palette = nonEmptyList(input.referenceLayout.palette);
+  const categoryKey = normalizePromptCategory(input.category);
+  const categoryLabel = categoryKey ? PRODUCT_CATEGORIES.find((item) => item.value === categoryKey)?.label.en ?? categoryKey : null;
 
   return [
     `Create a remade e-commerce poster in ${input.language} for market ${input.country}.`,
+    buildSimplifiedChineseOnlyLine(input.language),
     "Input order is fixed: the first uploaded image is the true product source image; the second uploaded image is the poster reference layout image.",
     "Use the first image only for product identity and visual truth: bottle shape, cap shape, label placement, material, transparency, reflections, and proportions.",
     "Use the second image as the poster blueprint: rebuild its composition, text zones, background type, packaging relationship, decorative props, and overall commercial poster feeling.",
@@ -339,20 +587,26 @@ export function buildReferenceRemakePrompt(input: {
     `Reference poster summary: ${input.referenceLayout.summary}.`,
     `Poster style: ${input.referenceLayout.posterStyle}. Background type: ${input.referenceLayout.backgroundType}.`,
     `Main product placement: ${input.referenceLayout.primaryProductPlacement}.`,
-    `Packaging present: ${input.referenceLayout.packagingPresent ? "yes" : "no"}. Packaging placement: ${input.referenceLayout.packagingPlacement || "not applicable"}.`,
-    `Product and packaging relationship: ${input.referenceLayout.productPackagingRelationship || "not specified"}.`,
+    `Packaging present: ${input.referenceLayout.packagingPresent ? "yes" : "no"}.`,
+    buildPromptFactLine([["Packaging placement", input.referenceLayout.packagingPlacement]]),
+    buildPromptFactLine([["Product and packaging relationship", input.referenceLayout.productPackagingRelationship]]),
     `Camera angle: ${input.referenceLayout.cameraAngle}. Depth and lighting: ${input.referenceLayout.depthAndLighting}.`,
     `Palette cues: ${palette.length ? palette.join(", ") : "match the reference poster palette"}.`,
     `Supporting props to rebuild when helpful: ${props.length ? props.join(", ") : "follow the reference poster only"}.`,
     `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} fidelity.`,
-    `Product name: ${input.productName}. Brand: ${input.brandName || "Not specified"}. Category: ${input.category}. Platform: ${input.platform}.`,
-    `Core selling points: ${input.sellingPoints || "Not provided"}.`,
-    `Additional notes: ${input.sourceDescription || "Not provided"}.`,
-    `Top banner text: ${input.remakeCopy.topBanner || "(leave empty if no top banner in reference)"}.`,
-    `Headline text: ${input.remakeCopy.headline || "(leave empty if no main headline in reference)"}.`,
-    `Subheadline text: ${input.remakeCopy.subheadline || "(leave empty if no subheadline in reference)"}.`,
-    `Bottom banner text: ${input.remakeCopy.bottomBanner || "(leave empty if no bottom banner in reference)"}.`,
-    `Callout texts: ${callouts.length ? callouts.join(" | ") : "(no callout badges required)"}.`,
+    buildPromptFactLine([
+      ["Product name", input.productName],
+      ["Brand", input.brandName],
+      ["Category", categoryLabel],
+      ["Platform", input.platform],
+    ]),
+    buildPromptFactLine([["Core selling points", input.sellingPoints]]),
+    buildPromptFactLine([["Additional notes", input.sourceDescription]]),
+    buildReferenceSlotTextLine("Top banner text", input.remakeCopy.topBanner),
+    buildReferenceSlotTextLine("Headline text", input.remakeCopy.headline),
+    buildReferenceSlotTextLine("Subheadline text", input.remakeCopy.subheadline),
+    buildReferenceSlotTextLine("Bottom banner text", input.remakeCopy.bottomBanner),
+    callouts.length ? `Callout texts: ${callouts.join(" | ")}.` : null,
     isFallback
       ? "Fallback mode: keep the same poster skeleton, block hierarchy, packaging relationship, and scene type, but simplify the visible text. Prefer short readable phrases or label-like banner text over long exact copy."
       : "If the reference poster includes marketplace-style text bars or Chinese-style poster blocks, recreate the same hierarchy and block placement with the new copy instead of inventing a fresh western ad layout.",
@@ -361,11 +615,13 @@ export function buildReferenceRemakePrompt(input: {
       : "Prioritize these in order: product identity replacement, poster composition match, banner block preservation, packaging/prop relationship, accurate copy slot replacement.",
     "Do not turn this into a generic lifestyle poster unless the reference image itself is that kind of poster.",
     "Do not omit the packaging relationship, text bars, or poster structure if they are present in the reference.",
-    `Restrictions: ${input.restrictions || "No unsupported logos, pricing, or medical claims."}.`,
+    buildRestrictionsLine(input.restrictions),
     isFallback
       ? "Avoid distorted packaging, duplicated products, wrong brand replacement, or missing banner blocks. If needed, reduce the amount of text but preserve the top banner, headline region, bottom banner, and overall poster framing."
       : "Avoid distorted packaging, unreadable core text, duplicated products, wrong brand replacement, or missing poster bars.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 export function buildReferenceDirectRemakePrompt(input: {
@@ -394,6 +650,8 @@ export function buildReferenceDirectRemakePrompt(input: {
   const extraPrompt = input.referenceExtraPrompt?.trim();
   const negativePrompt = input.referenceNegativePrompt?.trim();
   const callouts = nonEmptyList(input.referencePosterCopyHints?.callouts ?? []);
+  const categoryKey = normalizePromptCategory(input.category);
+  const categoryLabel = categoryKey ? PRODUCT_CATEGORIES.find((item) => item.value === categoryKey)?.label.en ?? categoryKey : null;
   const hintLines = [
     input.referenceLayoutHints?.summary ? `Operator layout hint: ${input.referenceLayoutHints.summary}.` : null,
     input.referenceLayoutHints?.backgroundType
@@ -418,6 +676,7 @@ export function buildReferenceDirectRemakePrompt(input: {
 
   return [
     `Remake the second input image as a poster in ${input.language} for market ${input.country}.`,
+    buildSimplifiedChineseOnlyLine(input.language),
     "The first image is the real product source. The second image is the exact visual reference poster.",
     "Keep the second image's composition, camera angle, background type, color blocking, packaging relationship, decorative elements, banner bars, text positions, and overall poster feeling as close as possible.",
     "Replace only the reference product with the product from the first image.",
@@ -426,15 +685,20 @@ export function buildReferenceDirectRemakePrompt(input: {
     ...strengthLines,
     ...buildBrandOverrideLines(input.brandProfile),
     `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} fidelity.`,
-    `Product name: ${input.productName}. Brand: ${input.brandName || "Not specified"}. Category: ${input.category}. Platform: ${input.platform}.`,
-    `Selling points for product understanding only: ${input.sellingPoints || "Not provided"}.`,
-    `Additional notes: ${input.sourceDescription || "Not provided"}.`,
+    buildPromptFactLine([
+      ["Product name", input.productName],
+      ["Brand", input.brandName],
+      ["Category", categoryLabel],
+      ["Platform", input.platform],
+    ]),
+    buildPromptFactLine([["Selling points for product understanding only", input.sellingPoints]]),
+    buildPromptFactLine([["Additional notes", input.sourceDescription]]),
     input.preserveReferenceText
       ? "Preserve the reference poster's original visible text content as much as possible. Keep the same text quantity, text hierarchy, font feeling, stroke feeling, banner text style, and approximate line breaks whenever possible."
       : "Text may be adapted, but keep the same number of major text blocks, similar text hierarchy, and the same banner/title layout as the reference.",
     ...hintLines,
     extraPrompt ? `Extra remake guidance: ${extraPrompt}` : null,
-    `Restrictions: ${input.restrictions || "No unsupported logos, pricing, or medical claims."}.`,
+    buildRestrictionsLine(input.restrictions),
     negativePrompt ? `Extra avoid instructions: ${negativePrompt}` : null,
     isFallback
       ? "Fallback mode: if exact lettering is difficult, preserve the same text block shapes, colors, and placement first. Prefer approximate readable lettering over changing the poster structure."

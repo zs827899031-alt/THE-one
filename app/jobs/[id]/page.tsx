@@ -4,13 +4,23 @@ import { JobDetailsClient } from "@/components/job-details-client";
 import { getJobDetails } from "@/lib/db";
 import { getUiLanguage } from "@/lib/ui-language";
 
-export default async function JobDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function JobDetailsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const { id } = await params;
+  const query = await searchParams;
   const details = getJobDetails(id);
   if (!details) {
     notFound();
   }
 
   const language = await getUiLanguage();
-  return <JobDetailsClient initialDetails={details} language={language} />;
+  const itemParam = typeof query.item === "string" ? query.item : null;
+  const initialActiveItemId = itemParam && details.items.some((item) => item.id === itemParam) ? itemParam : null;
+
+  return <JobDetailsClient initialDetails={details} language={language} initialActiveItemId={initialActiveItemId} />;
 }

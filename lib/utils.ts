@@ -46,6 +46,7 @@ export function parseRatio(value: string): [number, number] {
 
 export function resolutionToPixels(label: string): number {
   switch (label) {
+    case "0.5K":
     case "512px":
       return 512;
     case "1K":
@@ -57,6 +58,10 @@ export function resolutionToPixels(label: string): number {
     default:
       return 1024;
   }
+}
+
+export function isGeminiImageSizeBucket(label: string): boolean {
+  return label === "0.5K" || label === "1K" || label === "2K" || label === "4K" || label === "512px";
 }
 
 export function dimensionsForVariant(ratio: string, resolution: string): { width: number; height: number } {

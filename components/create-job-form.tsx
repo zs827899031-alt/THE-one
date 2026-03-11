@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import {
@@ -26,6 +26,8 @@ interface TemplateMatchPreview {
 const CREATE_JOB_DRAFT_KEY = "commerce-image-studio.create-draft.v1";
 const CREATE_JOB_PROMPT_PREFILL_KEY = "commerce-image-studio.create-prompt-prefill.v1";
 const INITIAL_SELECTED_TYPES = ["scene", "detail", "pain-point"];
+const SUITE_SELECTED_TYPES = ["main-image", "lifestyle", "feature-overview", "scene", "material-craft", "size-spec"];
+const AMAZON_A_PLUS_SELECTED_TYPES = ["poster", "feature-overview", "multi-scene", "detail", "size-spec", "culture-value"];
 const INITIAL_SELECTED_RATIOS = ["1:1"];
 const INITIAL_SELECTED_RESOLUTIONS = ["4K"];
 const INITIAL_OPEN_SECTIONS = {
@@ -34,7 +36,7 @@ const INITIAL_OPEN_SECTIONS = {
   advanced: false,
 };
 const INITIAL_PAYLOAD = {
-  creationMode: "standard" as "standard" | "reference-remix" | "prompt",
+  creationMode: "standard" as "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus",
   referenceStrength: "balanced" as "reference" | "balanced" | "product",
   preserveReferenceText: true,
   productName: "",
@@ -44,6 +46,8 @@ const INITIAL_PAYLOAD = {
   sellingPoints: "",
   restrictions: "",
   sourceDescription: "",
+  materialInfo: "",
+  sizeInfo: "",
   customPrompt: "",
   customNegativePrompt: "",
   autoOptimizePrompt: false,
@@ -72,7 +76,7 @@ function copyFor(language: UiLanguage) {
         referenceImages: "参考图",
         referenceHint: "上传一张或多张参考图，系统会保留整体构图与氛围，并把主体替换成你的商品。",
         creationMode: "创作模式",
-        creationModeHint: "标准模式基于商品原图优化；提示词模式由你直接输入文字提示；参考图复刻会额外读取参考图并复刻整体画面结构。",
+        creationModeHint: "标准模式基于商品原图优化；套图模式生成一整套通用商品图；亚马逊A+模式生成固定详情模块；提示词模式由你直接输入文字提示；参考图复刻会额外读取参考图并复刻整体画面结构。",
         standardMode: "标准出图",
         promptMode: "提示词模式",
         referenceMode: "参考图复刻",
@@ -80,8 +84,9 @@ function copyFor(language: UiLanguage) {
         customPromptHint: "直接写你希望生成的画面、风格、背景、光线、构图和细节要求。",
         customNegativePrompt: "负向提示词",
         customNegativePromptHint: "填写你不希望出现的内容，比如“不要手部”“不要英文文字”“不要厨房背景”。",
-        autoOptimizePrompt: "自动优化提示词",
-        autoOptimizePromptHint: "开启后，系统会先把你写的提示词优化成更适合图像模型理解的文本提示词；关闭后将尽量按原文直接出图。",
+        autoOptimizePrompt: "自动优化为真实照片",
+        autoOptimizePromptHint:
+          "开启后，系统会先把你写的提示词优化成更适合真实摄影出图的文本，优先强调真实光线、镜头感、材质细节、自然阴影和商业摄影质感；关闭后将尽量按原文直接出图。",
         promptModePanelHint: "提示词模式不会使用模板匹配，系统会优先按你填写的文字提示词出图。",
         promptOptionalContext: "补充商品上下文（可选）",
         promptOptionalContextHint: "如果你只想直接按提示词出图，下面这些字段都可以留空。",
@@ -190,7 +195,7 @@ function copyFor(language: UiLanguage) {
         referenceImages: "Reference images",
         referenceHint: "Upload one or more reference images. The system will reuse the overall composition and replace the subject with your product.",
         creationMode: "Creation mode",
-        creationModeHint: "Standard mode optimizes from the product source image. Prompt mode lets you write the image prompt yourself. Reference remake also reads reference images and recreates the whole visual structure.",
+        creationModeHint: "Standard mode optimizes from the product source image. Image set mode creates a fixed six-image product set. Amazon A+ mode creates a fixed A+ detail module set. Prompt mode lets you write the image prompt yourself. Reference remake also reads reference images and recreates the whole visual structure.",
         standardMode: "Standard",
         promptMode: "Prompt mode",
         referenceMode: "Reference remake",
@@ -198,8 +203,9 @@ function copyFor(language: UiLanguage) {
         customPromptHint: "Describe the desired scene, style, background, lighting, composition, and detail requirements directly.",
         customNegativePrompt: "Negative prompt",
         customNegativePromptHint: "Add anything you want to avoid, such as “no hands”, “no English text”, or “no kitchen background”.",
-        autoOptimizePrompt: "Auto-optimize prompt",
-        autoOptimizePromptHint: "When enabled, the system rewrites your prompt into a more image-model-friendly text prompt. When disabled, it follows your wording as directly as possible.",
+        autoOptimizePrompt: "Optimize for realistic photos",
+        autoOptimizePromptHint:
+          "When enabled, the system rewrites your prompt into a more realistic photo-oriented brief, prioritizing natural lighting, believable camera language, material detail, real shadows, and commercial photography quality. When disabled, it follows your wording as directly as possible.",
         promptModePanelHint: "Prompt mode does not use template matching. The system primarily follows your text prompt.",
         promptOptionalContext: "Add optional product context",
         promptOptionalContextHint: "If you only want to generate directly from your prompt, you can leave all fields below empty.",
@@ -312,6 +318,39 @@ function labelFor(value: string, language: UiLanguage, options: Array<{ value: s
 export function CreateJobForm({ language }: { language: UiLanguage }) {
   const router = useRouter();
   const text = useMemo(() => copyFor(language), [language]);
+  const suiteModeLabel = language === "zh" ? "套图模式" : "Image set mode";
+  const suiteModeHint =
+    language === "zh"
+      ? "上传主图后，系统会自动生成一整套通用商品套图：主图、生活方式、卖点总览、场景图、材质工艺和尺寸参数。"
+      : "Upload a source image and the system will generate a full generic image set: main image, lifestyle, feature overview, scene, material & craft, and size spec.";
+  const suiteModulesSummary =
+    language === "zh"
+      ? "固定覆盖：主图、生活方式、卖点总览、场景图、材质工艺、尺寸参数。"
+      : "Fixed coverage: main image, lifestyle, feature overview, scene, material & craft, and size spec.";
+  const suiteMaterialLabel = language === "zh" ? "材质（必填）" : "Material (required)";
+  const suiteSizeLabel = language === "zh" ? "尺寸大小（必填）" : "Size / dimensions (required)";
+  const suiteSellingPointsLabel = language === "zh" ? "核心卖点（必填）" : "Selling points (required)";
+  const suiteQuantityLabel = language === "zh" ? "套图数量" : "Set count";
+  const suiteModeRequiredHint =
+    language === "zh" ? "套图模式需要填写品类、卖点、材质和尺寸大小。" : "Image set mode requires category, selling points, material, and size.";
+  const amazonAPlusModeLabel = language === "zh" ? "亚马逊A+图" : "Amazon A+";
+  const amazonAPlusModeHint =
+    language === "zh"
+      ? "上传主图后，系统会自动生成一整套 Amazon A+ 详情模块：主视觉海报、核心卖点解析、多场景应用、产品细节、尺寸标注和文化价值。"
+      : "Upload a main image and the system will generate a full Amazon A+ module set: hero poster, feature overview, multi-scene usage, detail close-ups, size spec, and cultural value.";
+  const amazonAPlusLockedPlatformHint =
+    language === "zh" ? "A+ 模式固定按 Amazon 详情页模块生成。" : "A+ mode is locked to Amazon detail-page modules.";
+  const amazonAPlusContextHint =
+    language === "zh"
+      ? "可选补充产品名、品牌、卖点和补充说明，帮助模型更稳定地生成整套 A+ 模块。"
+      : "Optionally add the product name, brand, selling points, and extra notes to make the A+ module set more consistent.";
+  const amazonAPlusModulesSummary =
+    language === "zh"
+      ? "固定覆盖：主视觉海报、核心卖点解析、多场景应用、产品细节、尺寸标注、文化价值。"
+      : "Fixed coverage: hero poster, feature overview, multi-scene usage, detail close-ups, size spec, and cultural value.";
+  const amazonAPlusProductLabel = language === "zh" ? "产品名称（可选）" : "Product name (optional)";
+  const amazonAPlusSellingPointsLabel = language === "zh" ? "核心卖点（可选）" : "Selling points (optional)";
+  const amazonAPlusSourceDescriptionLabel = language === "zh" ? "补充说明（可选）" : "Additional notes (optional)";
   const [isPending, startTransition] = useTransition();
   const [files, setFiles] = useState<File[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
@@ -335,8 +374,14 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
   const [draftReady, setDraftReady] = useState(false);
   const [submittedJobId, setSubmittedJobId] = useState<string | null>(null);
   const allowLeaveRef = useRef(false);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const productNameInputRef = useRef<HTMLInputElement | null>(null);
   const customPromptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const [viewportLayout, setViewportLayout] = useState({
+    compact: false,
+    cramped: false,
+    availableHeight: 0,
+  });
 
   const hasDraftChanges = useMemo(() => {
     const payloadChanged = JSON.stringify(payload) !== JSON.stringify(INITIAL_PAYLOAD);
@@ -407,7 +452,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
           platform?: string;
           ratio?: string;
           resolution?: string;
-          creationMode?: "standard" | "reference-remix" | "prompt";
+          creationMode?: "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
           referenceStrength?: "reference" | "balanced" | "product";
         };
 
@@ -429,7 +474,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
           setSelectedRatios([prefill.ratio]);
         }
         if (prefill.resolution) {
-          setSelectedResolutions([prefill.resolution === "512px" ? "1K" : prefill.resolution]);
+          setSelectedResolutions([prefill.resolution === "512px" ? "0.5K" : prefill.resolution]);
         }
         setOpenSections((current) => ({ ...current, advanced: true, base: true }));
         setRecommendationMessage(text.promptPrefillApplied);
@@ -678,7 +723,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
       setSelectedTemplateOverrides({});
     }
 
-    if (!selectedResolutions.length || selectedResolutions[0] === "512px") {
+    if (!selectedResolutions.length) {
       setSelectedResolutions(["4K"]);
     }
 
@@ -722,22 +767,42 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     }
 
     const nextCountry = getDefaultCountryForLanguage(payload.language);
-    if (payload.includeCopyLayout || payload.autoOptimizePrompt || (nextCountry && payload.country !== nextCountry)) {
+    if (payload.includeCopyLayout || (nextCountry && payload.country !== nextCountry)) {
       setPayload((current) => ({
         ...current,
         includeCopyLayout: false,
-        autoOptimizePrompt: false,
         country: getDefaultCountryForLanguage(current.language) ?? current.country,
       }));
     }
   }, [
-    payload.autoOptimizePrompt,
     payload.country,
     payload.creationMode,
     payload.includeCopyLayout,
     payload.language,
     selectedTemplateOverrides,
   ]);
+
+  useEffect(() => {
+    const updateViewportLayout = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const topOffset = formRef.current?.getBoundingClientRect().top ?? 0;
+      const availableHeight = Math.max(height - topOffset - 16, 520);
+
+      setViewportLayout({
+        compact: height <= 980 || width <= 1560,
+        cramped: height <= 860 || width <= 1320,
+        availableHeight,
+      });
+    };
+
+    updateViewportLayout();
+    window.addEventListener("resize", updateViewportLayout);
+
+    return () => {
+      window.removeEventListener("resize", updateViewportLayout);
+    };
+  }, []);
 
   function toggleSelection(value: string, selected: string[], setter: (items: string[]) => void) {
     if (selected.includes(value)) {
@@ -804,6 +869,8 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
       sellingPoints: "",
       restrictions: "",
       sourceDescription: "",
+      materialInfo: "",
+      sizeInfo: "",
       customPrompt: "",
       customNegativePrompt: "",
     }));
@@ -842,6 +909,8 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
       sellingPoints: "",
       restrictions: "",
       sourceDescription: "",
+      materialInfo: "",
+      sizeInfo: "",
       customPrompt: "",
       customNegativePrompt: "",
       referenceExtraPrompt: "",
@@ -892,6 +961,14 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
 
     if (payload.creationMode === "reference-remix" && !referenceFiles.length) {
       setErrorMessage(text.referenceFilesRequired);
+      return;
+    }
+
+    if (
+      payload.creationMode === "suite" &&
+      (!payload.category.trim() || !payload.sellingPoints.trim() || !payload.materialInfo.trim() || !payload.sizeInfo.trim())
+    ) {
+      setErrorMessage(suiteModeRequiredHint);
       return;
     }
 
@@ -1021,18 +1098,32 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
 
   const currentPreviewUrl = previewUrls[previewIndex] ?? null;
   const currentReferencePreviewUrl = referencePreviewUrls[referencePreviewIndex] ?? null;
-  const resolutionOptions =
-    payload.creationMode === "reference-remix" ? RESOLUTIONS.filter((option) => option.value !== "512px") : RESOLUTIONS;
-  const effectiveSelectedTypes = payload.creationMode === "prompt" ? ["scene"] : selectedTypes;
+  const resolutionOptions = RESOLUTIONS;
+  const effectiveSelectedTypes =
+    payload.creationMode === "prompt"
+      ? ["scene"]
+      : payload.creationMode === "suite"
+        ? SUITE_SELECTED_TYPES
+        : payload.creationMode === "amazon-a-plus"
+          ? AMAZON_A_PLUS_SELECTED_TYPES
+          : selectedTypes;
   const generationHint =
     payload.creationMode === "prompt"
       ? text.promptModePanelHint
+      : payload.creationMode === "suite"
+        ? suiteModulesSummary
+      : payload.creationMode === "amazon-a-plus"
+        ? amazonAPlusModulesSummary
       : payload.creationMode === "reference-remix"
         ? text.remakeSimplifiedHint
         : recommendationMessage || text.hint;
   const baseSummary =
     payload.creationMode === "prompt"
       ? payload.customPrompt.trim() || text.baseSummaryEmpty
+      : payload.creationMode === "suite"
+        ? [payload.productName, labelFor(payload.category, language, PRODUCT_CATEGORIES), payload.materialInfo].filter(Boolean).join(" · ") || suiteModeHint
+      : payload.creationMode === "amazon-a-plus"
+        ? [payload.productName, payload.brandName, payload.sellingPoints].filter(Boolean).join(" · ") || amazonAPlusContextHint
       : payload.creationMode === "reference-remix"
         ? [
             payload.referenceStrength === "reference"
@@ -1063,6 +1154,25 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
             labelFor(payload.platform, language, PLATFORMS),
             labelFor(payload.language, language, OUTPUT_LANGUAGES),
             text.promptMode,
+            selectedRatios[0] ?? "-",
+            selectedResolutions[0] ?? "-",
+          ].join(" · ")
+      : payload.creationMode === "suite"
+        ? [
+            labelFor(payload.country, language, COUNTRIES),
+            labelFor(payload.language, language, OUTPUT_LANGUAGES),
+            labelFor(payload.platform, language, PLATFORMS),
+            suiteModeLabel,
+            `${effectiveSelectedTypes.length} ${text.typesUnit}`,
+            selectedRatios[0] ?? "-",
+            selectedResolutions[0] ?? "-",
+          ].join(" · ")
+      : payload.creationMode === "amazon-a-plus"
+        ? [
+            labelFor(payload.country, language, COUNTRIES),
+            labelFor(payload.language, language, OUTPUT_LANGUAGES),
+            amazonAPlusModeLabel,
+            `${effectiveSelectedTypes.length} ${text.typesUnit}`,
             selectedRatios[0] ?? "-",
             selectedResolutions[0] ?? "-",
           ].join(" · ")
@@ -1100,10 +1210,26 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     .replace("{ratios}", String(selectedRatios.length))
     .replace("{resolutions}", String(selectedResolutions.length))
     .replace("{variants}", String(payload.variantsPerType));
+  const createWorkspaceClassName = [
+    "create-workspace",
+    viewportLayout.compact ? "is-compact-viewport" : "",
+    viewportLayout.cramped ? "is-cramped-viewport" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const createWorkspaceStyle = viewportLayout.compact
+    ? ({ "--create-workspace-height": `${viewportLayout.availableHeight}px` } as CSSProperties)
+    : undefined;
+  const promptRows = viewportLayout.cramped ? 4 : viewportLayout.compact ? 5 : 6;
+  const longRows = viewportLayout.compact ? 3 : 4;
+  const mediumRows = viewportLayout.compact ? 2 : 3;
+  const jsonRows = viewportLayout.cramped ? 5 : viewportLayout.compact ? 6 : 8;
+  const posterJsonRows = viewportLayout.cramped ? 4 : viewportLayout.compact ? 5 : 6;
+  const headerRows = viewportLayout.compact ? 3 : 4;
 
   return (
     <>
-      <form className="create-workspace" onSubmit={handleSubmit}>
+      <form className={createWorkspaceClassName} onSubmit={handleSubmit} ref={formRef} style={createWorkspaceStyle}>
         <aside className="create-sidebar">
           <div className="create-sidebar-sticky">
             <section className="panel create-panel">
@@ -1295,6 +1421,24 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   })}
                 </div>
               </section>
+            ) : payload.creationMode === "suite" ? (
+              <section className="panel create-panel">
+                <div className="split-header compact">
+                  <div>
+                    <h3>{suiteModeLabel}</h3>
+                    <p className="helper">{suiteModeHint}</p>
+                  </div>
+                </div>
+              </section>
+            ) : payload.creationMode === "amazon-a-plus" ? (
+              <section className="panel create-panel">
+                <div className="split-header compact">
+                  <div>
+                    <h3>{amazonAPlusModeLabel}</h3>
+                    <p className="helper">{amazonAPlusModeHint}</p>
+                  </div>
+                </div>
+              </section>
             ) : payload.creationMode === "reference-remix" ? (
               <section className="panel create-panel">
                 <div className="split-header compact">
@@ -1318,6 +1462,27 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
         </aside>
 
         <div className="create-main stack gap-24">
+          <section className="panel create-panel create-submit-toolbar">
+            <div className="create-submit-toolbar-copy">
+              <p className="helper">{requestCountSummary}</p>
+              <p className="helper">{requestCountBreakdown}</p>
+              {payload.creationMode === "prompt" && effectiveSelectedTypes.length > 1 ? (
+                <p className="helper warning-text">{text.multiTypeBillingHint}</p>
+              ) : null}
+              <p className="helper">{text.hint}</p>
+              {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
+            </div>
+            <div className="button-row create-submit-toolbar-actions">
+              <button className="ghost-button" onClick={clearDraft} type="button">
+                {text.clearDraft}
+              </button>
+              <button className="primary-button" disabled={isPending} type="submit">
+                {isPending ? text.submitting : text.submit}
+              </button>
+            </div>
+          </section>
+
+          <div className="create-primary-grid">
         <section className="panel create-panel accordion-panel">
           <div className="accordion-header">
             <div className="accordion-title-group">
@@ -1353,6 +1518,24 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     />
                     <span>{text.standardMode}</span>
                   </label>
+                  <label className={payload.creationMode === "suite" ? "chip is-active" : "chip"}>
+                    <input
+                      checked={payload.creationMode === "suite"}
+                      name="creation-mode"
+                      onChange={() => setPayload((current) => ({ ...current, creationMode: "suite" }))}
+                      type="radio"
+                    />
+                    <span>{suiteModeLabel}</span>
+                  </label>
+                  <label className={payload.creationMode === "amazon-a-plus" ? "chip is-active" : "chip"}>
+                    <input
+                      checked={payload.creationMode === "amazon-a-plus"}
+                      name="creation-mode"
+                      onChange={() => setPayload((current) => ({ ...current, creationMode: "amazon-a-plus", platform: "amazon" }))}
+                      type="radio"
+                    />
+                    <span>{amazonAPlusModeLabel}</span>
+                  </label>
                   <label className={payload.creationMode === "prompt" ? "chip is-active" : "chip"}>
                     <input
                       checked={payload.creationMode === "prompt"}
@@ -1372,7 +1555,13 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     <span>{text.referenceMode}</span>
                   </label>
                 </div>
-                <p className="helper inline-helper">{text.creationModeHint}</p>
+                <p className="helper inline-helper">
+                  {payload.creationMode === "suite"
+                    ? suiteModeHint
+                    : payload.creationMode === "amazon-a-plus"
+                      ? amazonAPlusModeHint
+                      : text.creationModeHint}
+                </p>
               </fieldset>
               {payload.creationMode === "reference-remix" ? (
                 <>
@@ -1432,7 +1621,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     <textarea
                       ref={customPromptInputRef}
                       required
-                      rows={6}
+                      rows={promptRows}
                       value={payload.customPrompt}
                       onChange={(event) => setPayload((current) => ({ ...current, customPrompt: event.target.value }))}
                     />
@@ -1441,7 +1630,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   <label>
                     <span>{text.customNegativePrompt}</span>
                     <textarea
-                      rows={3}
+                      rows={mediumRows}
                       value={payload.customNegativePrompt}
                       onChange={(event) =>
                         setPayload((current) => ({
@@ -1452,7 +1641,119 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     />
                     <small className="helper">{text.customNegativePromptHint}</small>
                   </label>
+                  <label className="checkbox-row helper-toggle-row">
+                    <input
+                      checked={payload.autoOptimizePrompt}
+                      type="checkbox"
+                      onChange={(event) =>
+                        setPayload((current) => ({
+                          ...current,
+                          autoOptimizePrompt: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>{text.autoOptimizePrompt}</span>
+                  </label>
+                  <p className="helper inline-helper">{text.autoOptimizePromptHint}</p>
                   <p className="helper inline-helper">{text.outputLanguageHint}</p>
+                </>
+              ) : null}
+              {payload.creationMode === "suite" ? (
+                <>
+                  <label>
+                    <span>{text.productName}</span>
+                    <input
+                      ref={productNameInputRef}
+                      value={payload.productName}
+                      onChange={(event) => setPayload({ ...payload, productName: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>{text.category}</span>
+                    <select value={payload.category} onChange={(event) => setPayload({ ...payload, category: event.target.value })}>
+                      {PRODUCT_CATEGORIES.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label[language]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{text.brandName}</span>
+                    <input
+                      list="brand-library-options"
+                      value={payload.brandName}
+                      onChange={(event) => setPayload({ ...payload, brandName: event.target.value })}
+                    />
+                    <datalist id="brand-library-options">
+                      {brands.map((brand) => (
+                        <option key={brand.id} value={brand.name} />
+                      ))}
+                    </datalist>
+                    <small className="helper">{text.brandLibraryHint}</small>
+                  </label>
+                  <label>
+                    <span>{suiteSellingPointsLabel}</span>
+                    <textarea rows={longRows} value={payload.sellingPoints} onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>{suiteMaterialLabel}</span>
+                    <textarea rows={mediumRows} value={payload.materialInfo} onChange={(event) => setPayload({ ...payload, materialInfo: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>{suiteSizeLabel}</span>
+                    <textarea rows={mediumRows} value={payload.sizeInfo} onChange={(event) => setPayload({ ...payload, sizeInfo: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>{text.sourceDescription}</span>
+                    <textarea rows={mediumRows} value={payload.sourceDescription} onChange={(event) => setPayload({ ...payload, sourceDescription: event.target.value })} />
+                    <small className="helper">{suiteModeHint}</small>
+                  </label>
+                </>
+              ) : null}
+              {payload.creationMode === "amazon-a-plus" ? (
+                <>
+                  <label>
+                    <span>{amazonAPlusProductLabel}</span>
+                    <input
+                      ref={productNameInputRef}
+                      value={payload.productName}
+                      onChange={(event) => setPayload({ ...payload, productName: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    <span>{text.brandName}</span>
+                    <input
+                      list="brand-library-options"
+                      value={payload.brandName}
+                      onChange={(event) => setPayload({ ...payload, brandName: event.target.value })}
+                    />
+                    <datalist id="brand-library-options">
+                      {brands.map((brand) => (
+                        <option key={brand.id} value={brand.name} />
+                      ))}
+                    </datalist>
+                    <small className="helper">{text.brandLibraryHint}</small>
+                  </label>
+                  <label>
+                    <span>{language === "zh" ? "品类（可选）" : "Category (optional)"}</span>
+                    <select value={payload.category} onChange={(event) => setPayload({ ...payload, category: event.target.value })}>
+                      {PRODUCT_CATEGORIES.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label[language]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>{amazonAPlusSellingPointsLabel}</span>
+                    <textarea rows={mediumRows} value={payload.sellingPoints} onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })} />
+                  </label>
+                  <label>
+                    <span>{amazonAPlusSourceDescriptionLabel}</span>
+                    <textarea rows={mediumRows} value={payload.sourceDescription} onChange={(event) => setPayload({ ...payload, sourceDescription: event.target.value })} />
+                    <small className="helper">{amazonAPlusContextHint}</small>
+                  </label>
                 </>
               ) : null}
               {payload.creationMode === "standard" ? (
@@ -1492,15 +1793,15 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   </label>
                   <label>
                     <span>{text.sellingPoints}</span>
-                    <textarea rows={4} value={payload.sellingPoints} onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })} />
+                    <textarea rows={longRows} value={payload.sellingPoints} onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })} />
                   </label>
                   <label>
                     <span>{text.restrictions}</span>
-                    <textarea rows={3} value={payload.restrictions} onChange={(event) => setPayload({ ...payload, restrictions: event.target.value })} />
+                    <textarea rows={mediumRows} value={payload.restrictions} onChange={(event) => setPayload({ ...payload, restrictions: event.target.value })} />
                   </label>
                   <label>
                     <span>{text.sourceDescription}</span>
-                    <textarea rows={3} value={payload.sourceDescription} onChange={(event) => setPayload({ ...payload, sourceDescription: event.target.value })} />
+                    <textarea rows={mediumRows} value={payload.sourceDescription} onChange={(event) => setPayload({ ...payload, sourceDescription: event.target.value })} />
                   </label>
                 </>
               ) : null}
@@ -1600,16 +1901,20 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     </select>
                   </label>
                   <p className="helper inline-helper">{text.outputLanguageHint}</p>
-                  <label>
-                    <span>{text.platform}</span>
-                    <select value={payload.platform} onChange={(event) => setPayload({ ...payload, platform: event.target.value })}>
-                      {PLATFORMS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label[language]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {payload.creationMode === "amazon-a-plus" ? (
+                    <p className="helper inline-helper">{amazonAPlusLockedPlatformHint}</p>
+                  ) : (
+                    <label>
+                      <span>{text.platform}</span>
+                      <select value={payload.platform} onChange={(event) => setPayload({ ...payload, platform: event.target.value })}>
+                        {PLATFORMS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label[language]}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
 
                   <h2>{text.generation}</h2>
                   <div className="split-header compact generator-header-row">
@@ -1623,7 +1928,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   {payload.creationMode === "standard" ? (
                     <fieldset>
                       <legend>{text.imageTypes}</legend>
-                      <div className="chip-grid">
+                      <div className="chip-grid chip-grid-types">
                         {IMAGE_TYPE_OPTIONS.map((option) => (
                           <label className={selectedTypes.includes(option.value) ? "chip is-active" : "chip"} key={option.value}>
                             <input checked={selectedTypes.includes(option.value)} onChange={() => toggleSelection(option.value, selectedTypes, setSelectedTypes)} type="checkbox" />
@@ -1632,12 +1937,35 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                         ))}
                       </div>
                     </fieldset>
+                  ) : payload.creationMode === "suite" ? (
+                    <fieldset>
+                      <legend>{text.imageTypes}</legend>
+                      <div className="chip-grid chip-grid-types">
+                        {SUITE_SELECTED_TYPES.map((imageType) => (
+                          <span className="chip is-active" key={imageType}>
+                            <span>{labelFor(imageType, language, IMAGE_TYPE_OPTIONS)}</span>
+                          </span>
+                        ))}
+                      </div>
+                      <p className="helper inline-helper">{suiteModulesSummary}</p>
+                    </fieldset>
+                  ) : payload.creationMode === "amazon-a-plus" ? (
+                    <fieldset>
+                      <legend>{text.imageTypes}</legend>
+                      <div className="chip-grid chip-grid-types">
+                        {AMAZON_A_PLUS_SELECTED_TYPES.map((imageType) => (
+                          <span className="chip is-active" key={imageType}>
+                            <span>{labelFor(imageType, language, IMAGE_TYPE_OPTIONS)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </fieldset>
                   ) : null}
                 </>
               ) : null}
               <fieldset>
                 <legend>{text.ratios}</legend>
-                <div className="chip-grid small">
+                <div className="chip-grid chip-grid-ratios small">
                   {ASPECT_RATIOS.map((option) => (
                     <label className={selectedRatios.includes(option.value) ? "chip is-active" : "chip"} key={option.value}>
                       <input checked={selectedRatios.includes(option.value)} onChange={() => selectSingle(option.value, setSelectedRatios)} type="checkbox" />
@@ -1648,7 +1976,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
               </fieldset>
               <fieldset>
                 <legend>{text.resolutions}</legend>
-                <div className="chip-grid small">
+                <div className="chip-grid chip-grid-resolutions small">
                   {resolutionOptions.map((option) => (
                     <label className={selectedResolutions.includes(option.value) ? "chip is-active" : "chip"} key={option.value}>
                       <input checked={selectedResolutions.includes(option.value)} onChange={() => selectSingle(option.value, setSelectedResolutions)} type="checkbox" />
@@ -1658,7 +1986,17 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                 </div>
               </fieldset>
               <label>
-                <span>{payload.creationMode === "reference-remix" ? text.remakeVariants : text.variants}</span>
+                <span>
+                  {payload.creationMode === "reference-remix"
+                    ? text.remakeVariants
+                    : payload.creationMode === "suite"
+                      ? suiteQuantityLabel
+                      : payload.creationMode === "amazon-a-plus"
+                        ? language === "zh"
+                          ? "每个模块生成数量"
+                          : "Per-module count"
+                        : text.variants}
+                </span>
                 <input min={1} max={6} type="number" value={payload.variantsPerType} onChange={(event) => setPayload({ ...payload, variantsPerType: Number(event.target.value) || 1 })} />
               </label>
               {payload.creationMode === "standard" ? (
@@ -1670,6 +2008,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
             </div>
           ) : null}
         </section>
+          </div>
 
         <section className="panel create-panel accordion-panel">
           <div className="accordion-header">
@@ -1699,7 +2038,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   <label>
                     <span>{text.referenceExtraPrompt}</span>
                     <textarea
-                      rows={3}
+                      rows={mediumRows}
                       value={payload.referenceExtraPrompt}
                       onChange={(event) =>
                         setPayload((current) => ({
@@ -1713,7 +2052,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   <label>
                     <span>{text.referenceNegativePrompt}</span>
                     <textarea
-                      rows={3}
+                      rows={mediumRows}
                       value={payload.referenceNegativePrompt}
                       onChange={(event) =>
                         setPayload((current) => ({
@@ -1730,7 +2069,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     <label>
                       <span>{text.referenceLayoutOverride}</span>
                       <textarea
-                        rows={8}
+                        rows={jsonRows}
                         placeholder={text.jsonOverridePlaceholder}
                         value={payload.referenceLayoutOverrideJson}
                         onChange={(event) =>
@@ -1744,7 +2083,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     <label>
                       <span>{text.referencePosterCopyOverride}</span>
                       <textarea
-                        rows={6}
+                        rows={posterJsonRows}
                         placeholder={text.jsonOverridePlaceholder}
                         value={payload.referencePosterCopyOverrideJson}
                         onChange={(event) =>
@@ -1777,7 +2116,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
               <label>
                 <span>{text.temporaryApiHeaders}</span>
                 <textarea
-                  rows={4}
+                  rows={headerRows}
                   placeholder='{"Authorization":"Bearer your-key"}'
                   value={payload.temporaryApiHeaders}
                   onChange={(event) => setPayload({ ...payload, temporaryApiHeaders: event.target.value })}
@@ -1788,25 +2127,6 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
           ) : null}
         </section>
 
-        <footer className="panel form-footer create-submit-bar">
-          <div className="stack">
-            <p className="helper">{requestCountSummary}</p>
-            <p className="helper">{requestCountBreakdown}</p>
-              {payload.creationMode === "prompt" && effectiveSelectedTypes.length > 1 ? (
-                <p className="helper warning-text">{text.multiTypeBillingHint}</p>
-              ) : null}
-            <p className="helper">{text.hint}</p>
-          </div>
-          {errorMessage ? <p className="error-text">{errorMessage}</p> : null}
-          <div className="button-row">
-            <button className="ghost-button" onClick={clearDraft} type="button">
-              {text.clearDraft}
-            </button>
-            <button className="primary-button" disabled={isPending} type="submit">
-              {isPending ? text.submitting : text.submit}
-            </button>
-          </div>
-        </footer>
         </div>
       </form>
 

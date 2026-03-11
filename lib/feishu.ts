@@ -1,8 +1,51 @@
 ﻿import type { AppSettings, AssetRecord, FeishuFieldMapping, JobItemRecord, JobRecord } from "@/lib/types";
+import type { JobDetails } from "@/lib/types";
 
 const FEISHU_OPEN_BASE_URL = "https://open.feishu.cn";
 const FEISHU_MEDIA_UPLOAD_ALL_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_FEISHU_MEDIA_BLOCK_SIZE = 4 * 1024 * 1024;
+const FEISHU_REQUEST_RETRY_ATTEMPTS = 3;
+const FEISHU_UPLOAD_SESSION_ATTEMPTS = 2;
+const FEISHU_RETRY_BASE_DELAY_MS = 600;
+export const FEISHU_FIELD_MAPPING_KEYS: Array<keyof FeishuFieldMapping> = [
+  "title",
+  "image",
+  "mode",
+  "platform",
+  "country",
+  "language",
+  "typeSummary",
+  "ratioSummary",
+  "resolutionSummary",
+  "sizeSummary",
+  "statusSummary",
+  "ratio",
+  "resolution",
+  "requestedSize",
+  "actualSize",
+  "status",
+  "prompt",
+  "negativePrompt",
+  "createdAt",
+  "jobId",
+  "itemId",
+];
+export const RECOMMENDED_FEISHU_FIELD_MAPPING: FeishuFieldMapping = {
+  title: "标题",
+  image: "生成图片",
+  mode: "创作模式",
+  platform: "平台",
+  country: "国家",
+  language: "语言",
+  typeSummary: "图片统计",
+  ratioSummary: "比例汇总",
+  resolutionSummary: "分辨率汇总",
+  sizeSummary: "尺寸汇总",
+  statusSummary: "生成统计",
+  prompt: "提示词摘要",
+  createdAt: "生成时间",
+  jobId: "任务ID",
+};
 
 type FeishuChunkSeqMode = "index" | "offset";
 
@@ -34,6 +77,21 @@ type FeishuRecordResponse = {
   record?: {
     record_id?: string;
   };
+};
+
+type FeishuRecordWithFields = {
+  record_id?: string;
+  fields?: Record<string, unknown>;
+};
+
+type FeishuRecordDetailResponse = {
+  record?: FeishuRecordWithFields;
+};
+
+type FeishuRecordListResponse = {
+  items?: FeishuRecordWithFields[];
+  page_token?: string;
+  has_more?: boolean;
 };
 
 type FeishuFieldListResponse = {
@@ -91,6 +149,50 @@ function isFeishuParamsError(error: unknown) {
   return error instanceof Error && /params error/i.test(error.message);
 }
 
+function isRetryableFeishuRequestError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return /(fetch failed|network|socket|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|HTTP 5\d{2}|HTTP 429|rate limit)/i.test(
+    error.message,
+  );
+}
+
+async function waitForFeishuRetry(attempt: number) {
+  const delayMs = FEISHU_RETRY_BASE_DELAY_MS * 2 ** Math.max(0, attempt - 1);
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function withFeishuRetry<T>(
+  task: () => Promise<T>,
+  options: {
+    label: string;
+    attempts?: number;
+    retryWhen?: (error: unknown) => boolean;
+  },
+) {
+  const attempts = options.attempts ?? FEISHU_REQUEST_RETRY_ATTEMPTS;
+  const retryWhen = options.retryWhen ?? isRetryableFeishuRequestError;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (!retryWhen(error) || attempt === attempts) {
+        break;
+      }
+
+      await waitForFeishuRetry(attempt);
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : "Unknown Feishu request error.";
+  throw new Error(`${options.label} failed after ${attempts} attempts: ${message}`);
+}
+
 function formatFeishuErrorMessage(payload: (FeishuApiEnvelope<unknown> & Record<string, unknown>) | null, response: Response) {
   const code = payload?.code;
   const baseMessage = payload?.msg || payload?.message || `Feishu request failed with HTTP ${response.status}.`;
@@ -143,11 +245,38 @@ export function parseFeishuFieldMapping(rawJson?: string): FeishuFieldMapping {
   for (const [key, value] of Object.entries(parsed)) {
     if (typeof value === "string" && value.trim()) {
       const normalizedKey = key === "file" ? "image" : key;
-      mapping[normalizedKey as keyof FeishuFieldMapping] = value.trim();
+      if (FEISHU_FIELD_MAPPING_KEYS.includes(normalizedKey as keyof FeishuFieldMapping)) {
+        mapping[normalizedKey as keyof FeishuFieldMapping] = value.trim();
+      }
     }
   }
 
   return mapping;
+}
+
+export function stringifyFeishuFieldMapping(mapping: FeishuFieldMapping) {
+  const ordered = FEISHU_FIELD_MAPPING_KEYS.reduce<FeishuFieldMapping>((acc, key) => {
+    const value = mapping[key];
+    if (typeof value === "string" && value.trim()) {
+      acc[key] = value.trim();
+    }
+    return acc;
+  }, {});
+
+  return JSON.stringify(ordered, null, 2);
+}
+
+export function getRecommendedFeishuFieldMappingJson() {
+  return stringifyFeishuFieldMapping(RECOMMENDED_FEISHU_FIELD_MAPPING);
+}
+
+export function formatFeishuFieldMapping(rawJson?: string) {
+  const parsed = parseFeishuFieldMapping(rawJson);
+  if (!Object.keys(parsed).length) {
+    return "{}";
+  }
+
+  return stringifyFeishuFieldMapping(parsed);
 }
 
 export async function getFeishuTenantAccessToken(settings: AppSettings) {
@@ -256,91 +385,122 @@ async function uploadAssetToFeishuBitable(input: {
     buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
 
   const uploadAssetInChunks = async (seqMode: FeishuChunkSeqMode) => {
-    const prepared = await requestFeishuJson<FeishuMediaUploadPrepareResponse>(
-      "/open-apis/drive/v1/medias/upload_prepare",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${input.accessToken}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify({
-          file_name: fileName,
-          parent_type: parentType,
-          parent_node: parentNode,
-          size: input.buffer.byteLength,
-        }),
-      },
-    );
+    let lastError: unknown;
 
-    if (!prepared.upload_id) {
-      throw new Error("Feishu media upload prepare did not return an upload ID.");
+    for (let sessionAttempt = 1; sessionAttempt <= FEISHU_UPLOAD_SESSION_ATTEMPTS; sessionAttempt += 1) {
+      try {
+        const prepared = await withFeishuRetry(
+          () =>
+            requestFeishuJson<FeishuMediaUploadPrepareResponse>(
+              "/open-apis/drive/v1/medias/upload_prepare",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${input.accessToken}`,
+                  "Content-Type": "application/json; charset=utf-8",
+                },
+                body: JSON.stringify({
+                  file_name: fileName,
+                  parent_type: parentType,
+                  parent_node: parentNode,
+                  size: input.buffer.byteLength,
+                }),
+              },
+            ),
+          { label: "Feishu media upload prepare" },
+        );
+
+        if (!prepared.upload_id) {
+          throw new Error("Feishu media upload prepare did not return an upload ID.");
+        }
+        const uploadId = prepared.upload_id;
+
+        const blockSize = prepared.block_size || DEFAULT_FEISHU_MEDIA_BLOCK_SIZE;
+        const chunks: Array<{ start: number; buffer: Buffer }> = [];
+        for (let start = 0; start < input.buffer.byteLength; start += blockSize) {
+          chunks.push({
+            start,
+            buffer: input.buffer.subarray(start, Math.min(start + blockSize, input.buffer.byteLength)),
+          });
+        }
+
+        for (const [index, chunk] of chunks.entries()) {
+          await withFeishuRetry(
+            async () => {
+              const partForm = new FormData();
+              partForm.set("upload_id", uploadId);
+              partForm.set("seq", seqMode === "offset" ? String(chunk.start) : String(index));
+              partForm.set("size", String(chunk.buffer.byteLength));
+              partForm.set("checksum", computeAdler32(chunk.buffer));
+              partForm.set("file", new Blob([toArrayBuffer(chunk.buffer)], { type: input.asset.mimeType }), fileName);
+
+              await requestFeishuJson<null>(
+                "/open-apis/drive/v1/medias/upload_part",
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${input.accessToken}`,
+                  },
+                  body: partForm,
+                },
+              );
+            },
+            { label: `Feishu media upload part ${index + 1}/${chunks.length}` },
+          );
+        }
+
+        return await withFeishuRetry(
+          () =>
+            requestFeishuJson<FeishuMediaUploadResponse>(
+              "/open-apis/drive/v1/medias/upload_finish",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${input.accessToken}`,
+                  "Content-Type": "application/json; charset=utf-8",
+                },
+                body: JSON.stringify({
+                  upload_id: uploadId,
+                  block_num: prepared.block_num || chunks.length,
+                }),
+              },
+            ),
+          { label: "Feishu media upload finish" },
+        );
+      } catch (error) {
+        lastError = error;
+        if (!isRetryableFeishuRequestError(error) || sessionAttempt === FEISHU_UPLOAD_SESSION_ATTEMPTS) {
+          throw error;
+        }
+
+        await waitForFeishuRetry(sessionAttempt);
+      }
     }
 
-    const blockSize = prepared.block_size || DEFAULT_FEISHU_MEDIA_BLOCK_SIZE;
-    const chunks: Array<{ start: number; buffer: Buffer }> = [];
-    for (let start = 0; start < input.buffer.byteLength; start += blockSize) {
-      chunks.push({
-        start,
-        buffer: input.buffer.subarray(start, Math.min(start + blockSize, input.buffer.byteLength)),
-      });
-    }
+    throw lastError instanceof Error ? lastError : new Error("Feishu chunk upload failed without a response.");
+  };
 
-    for (const [index, chunk] of chunks.entries()) {
-      const partForm = new FormData();
-      partForm.set("upload_id", prepared.upload_id);
-      partForm.set("seq", seqMode === "offset" ? String(chunk.start) : String(index));
-      partForm.set("size", String(chunk.buffer.byteLength));
-      partForm.set("checksum", computeAdler32(chunk.buffer));
-      partForm.set("file", new Blob([toArrayBuffer(chunk.buffer)], { type: input.asset.mimeType }), fileName);
+  let data: FeishuMediaUploadResponse | null = null;
+  if (input.buffer.byteLength <= FEISHU_MEDIA_UPLOAD_ALL_LIMIT) {
+    data = await withFeishuRetry(async () => {
+      const form = new FormData();
+      form.set("file_name", fileName);
+      form.set("parent_type", parentType);
+      form.set("parent_node", parentNode);
+      form.set("size", String(input.buffer.byteLength));
+      form.set("file", new Blob([toArrayBuffer(input.buffer)], { type: input.asset.mimeType }), fileName);
 
-      await requestFeishuJson<null>(
-        "/open-apis/drive/v1/medias/upload_part",
+      return requestFeishuJson<FeishuMediaUploadResponse>(
+        "/open-apis/drive/v1/medias/upload_all",
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${input.accessToken}`,
           },
-          body: partForm,
+          body: form,
         },
       );
-    }
-
-    return requestFeishuJson<FeishuMediaUploadResponse>(
-      "/open-apis/drive/v1/medias/upload_finish",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${input.accessToken}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify({
-          upload_id: prepared.upload_id,
-          block_num: prepared.block_num || chunks.length,
-        }),
-      },
-    );
-  };
-
-  let data: FeishuMediaUploadResponse | null = null;
-  if (input.buffer.byteLength <= FEISHU_MEDIA_UPLOAD_ALL_LIMIT) {
-    const form = new FormData();
-    form.set("file_name", fileName);
-    form.set("parent_type", parentType);
-    form.set("parent_node", parentNode);
-    form.set("size", String(input.buffer.byteLength));
-    form.set("file", new Blob([toArrayBuffer(input.buffer)], { type: input.asset.mimeType }), fileName);
-
-    data = await requestFeishuJson<FeishuMediaUploadResponse>(
-      "/open-apis/drive/v1/medias/upload_all",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${input.accessToken}`,
-        },
-        body: form,
-      },
-    );
+    }, { label: "Feishu media upload all" });
   } else {
     const chunkUploadErrors: string[] = [];
     for (const seqMode of ["index", "offset"] as const) {
@@ -371,6 +531,10 @@ async function uploadAssetToFeishuBitable(input: {
 
 function buildModeLabel(mode: JobRecord["creationMode"]) {
   switch (mode) {
+    case "amazon-a-plus":
+      return "亚马逊A+图";
+    case "suite":
+      return "套图模式";
     case "prompt":
       return "提示词模式";
     case "reference-remix":
@@ -380,10 +544,141 @@ function buildModeLabel(mode: JobRecord["creationMode"]) {
   }
 }
 
-function buildRecordTitle(job: JobRecord, item: JobItemRecord) {
+function buildImageTypeLabel(imageType: JobItemRecord["imageType"], language: JobRecord["uiLanguage"]) {
+  const zhLabels: Record<JobItemRecord["imageType"], string> = {
+    "main-image": "主图",
+    lifestyle: "生活方式",
+    scene: "场景图",
+    "white-background": "白底图",
+    model: "模特图",
+    poster: "海报图",
+    detail: "细节图",
+    "pain-point": "痛点图",
+    "feature-overview": "卖点总览",
+    "material-craft": "材质工艺",
+    "size-spec": "尺寸参数",
+    "multi-scene": "多场景应用",
+    "culture-value": "文化价值",
+  };
+  const enLabels: Record<JobItemRecord["imageType"], string> = {
+    "main-image": "Main image",
+    lifestyle: "Lifestyle",
+    scene: "Scene",
+    "white-background": "White background",
+    model: "Model",
+    poster: "Poster",
+    detail: "Detail",
+    "pain-point": "Pain-point",
+    "feature-overview": "Feature overview",
+    "material-craft": "Material & craft",
+    "size-spec": "Size spec",
+    "multi-scene": "Multi-scene usage",
+    "culture-value": "Cultural value",
+  };
+
+  return language === "zh" ? zhLabels[imageType] : enLabels[imageType];
+}
+
+function buildJobStatusLabel(status: JobRecord["status"]) {
+  switch (status) {
+    case "processing":
+      return "生成中";
+    case "completed":
+      return "已完成";
+    case "partial":
+      return "部分完成";
+    case "failed":
+      return "失败";
+    default:
+      return "排队中";
+  }
+}
+
+function buildTaskTitle(job: JobRecord) {
   const promptTitle = job.customPrompt?.trim().slice(0, 60);
   const baseTitle = job.productName?.trim() || promptTitle || "AI 生成图片";
-  return `${baseTitle} · ${item.imageType} · #${item.variantIndex}`;
+  return baseTitle;
+}
+
+function uniqueNonEmpty(values: Array<string | null | undefined>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  );
+}
+
+function summarizeJoined(values: Array<string | null | undefined>, separator = ", ") {
+  return uniqueNonEmpty(values).join(separator) || null;
+}
+
+function summarizePromptValues(values: Array<string | null | undefined>, maxUnique = 3) {
+  const normalized = uniqueNonEmpty(values);
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  if (normalized.length <= maxUnique) {
+    return normalized.join("\n\n---\n\n");
+  }
+
+  return `${normalized.slice(0, maxUnique).join("\n\n---\n\n")}\n\n...`;
+}
+
+function summarizeTypeCounts(items: JobDetails["items"], language: JobRecord["uiLanguage"]) {
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    const label = buildImageTypeLabel(item.imageType, language);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+
+  const summary = Array.from(counts.entries())
+    .map(([imageType, count]) => (count > 1 ? `${imageType} ×${count}` : imageType))
+    .join(", ");
+
+  return summary || null;
+}
+
+function summarizeStatus(items: JobDetails["items"]) {
+  const total = items.length;
+  const success = items.filter((item) => item.status === "completed").length;
+  const failed = items.filter((item) => item.status === "failed").length;
+  return `成功 ${success} / 失败 ${failed} / 总计 ${total}`;
+}
+
+function summarizeRequestedSizes(items: JobDetails["items"]) {
+  return summarizeJoined(items.map((item) => `${item.width}×${item.height}`));
+}
+
+function summarizeActualSizes(items: JobDetails["items"]) {
+  return summarizeJoined(
+    items.map((item) =>
+      item.generatedAsset?.width && item.generatedAsset?.height
+        ? `${item.generatedAsset.width}×${item.generatedAsset.height}`
+        : null,
+    ),
+  );
+}
+
+function extractFileTokens(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const tokens = value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+
+      const maybeToken = "file_token" in entry ? (entry as { file_token?: unknown }).file_token : null;
+      return typeof maybeToken === "string" && maybeToken.trim() ? maybeToken.trim() : null;
+    })
+    .filter((token): token is string => Boolean(token));
+
+  return Array.from(new Set(tokens));
 }
 
 function putField(
@@ -404,14 +699,256 @@ function putField(
   fields[fieldName] = value;
 }
 
-export async function syncGeneratedImageToFeishu(input: {
-  settings: AppSettings;
-  asset: AssetRecord;
-  assetBuffer: Buffer;
+function buildTaskFields(input: {
+  mapping: FeishuFieldMapping;
   job: JobRecord;
-  item: JobItemRecord;
-  promptText: string | null;
-  negativePrompt: string | null;
+  details: JobDetails;
+  fileTokens: string[];
+}) {
+  const ratioSummary = summarizeJoined(input.details.items.map((item) => item.ratio));
+  const resolutionSummary = summarizeJoined(input.details.items.map((item) => item.resolutionLabel));
+  const requestedSizeSummary = summarizeRequestedSizes(input.details.items);
+  const actualSizeSummary = summarizeActualSizes(input.details.items);
+  const typeSummary = summarizeTypeCounts(input.details.items, input.job.uiLanguage);
+  const statusSummary = summarizeStatus(input.details.items);
+  const promptSummary = summarizePromptValues(input.details.items.map((item) => item.promptText));
+  const negativePromptSummary = summarizePromptValues(input.details.items.map((item) => item.negativePrompt));
+
+  const fields: Record<string, unknown> = {};
+  putField(fields, input.mapping, "title", buildTaskTitle(input.job));
+  putField(
+    fields,
+    input.mapping,
+    "image",
+    input.fileTokens.length > 0 ? input.fileTokens.map((fileToken) => ({ file_token: fileToken })) : null,
+  );
+  putField(fields, input.mapping, "prompt", promptSummary);
+  putField(fields, input.mapping, "negativePrompt", negativePromptSummary);
+  putField(fields, input.mapping, "status", buildJobStatusLabel(input.job.status));
+  putField(fields, input.mapping, "statusSummary", statusSummary);
+  putField(fields, input.mapping, "mode", buildModeLabel(input.job.creationMode));
+  putField(fields, input.mapping, "platform", input.job.platform);
+  putField(fields, input.mapping, "country", input.job.country);
+  putField(fields, input.mapping, "language", input.job.language);
+  putField(fields, input.mapping, "typeSummary", typeSummary);
+  putField(fields, input.mapping, "ratio", ratioSummary);
+  putField(fields, input.mapping, "ratioSummary", ratioSummary);
+  putField(fields, input.mapping, "resolution", resolutionSummary);
+  putField(fields, input.mapping, "resolutionSummary", resolutionSummary);
+  putField(fields, input.mapping, "requestedSize", requestedSizeSummary);
+  putField(fields, input.mapping, "actualSize", actualSizeSummary);
+  putField(fields, input.mapping, "sizeSummary", actualSizeSummary ?? requestedSizeSummary);
+  putField(fields, input.mapping, "jobId", input.job.id);
+  putField(fields, input.mapping, "createdAt", input.job.createdAt);
+  return fields;
+}
+
+async function createFeishuRecord(input: {
+  accessToken: string;
+  settings: AppSettings;
+  fields: Record<string, unknown>;
+}) {
+  return withFeishuRetry(
+    () =>
+      requestFeishuJson<FeishuRecordResponse>(
+        `/open-apis/bitable/v1/apps/${input.settings.feishuBitableAppToken}/tables/${input.settings.feishuBitableTableId}/records`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${input.accessToken}`,
+            "Content-Type": "application/json; charset=utf-8",
+          },
+          body: JSON.stringify({ fields: input.fields }),
+        },
+      ),
+    { label: "Feishu create record" },
+  );
+}
+
+async function updateFeishuRecord(input: {
+  accessToken: string;
+  settings: AppSettings;
+  recordId: string;
+  fields: Record<string, unknown>;
+}) {
+  return withFeishuRetry(
+    () =>
+      requestFeishuJson<FeishuRecordResponse>(
+        `/open-apis/bitable/v1/apps/${input.settings.feishuBitableAppToken}/tables/${input.settings.feishuBitableTableId}/records/${input.recordId}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${input.accessToken}`,
+            "Content-Type": "application/json; charset=utf-8",
+          },
+          body: JSON.stringify({ fields: input.fields }),
+        },
+      ),
+    { label: "Feishu update record" },
+  );
+}
+
+async function getFeishuRecordById(input: {
+  accessToken: string;
+  settings: AppSettings;
+  recordId: string;
+}) {
+  return withFeishuRetry(
+    () =>
+      requestFeishuJson<FeishuRecordDetailResponse>(
+        `/open-apis/bitable/v1/apps/${input.settings.feishuBitableAppToken}/tables/${input.settings.feishuBitableTableId}/records/${input.recordId}`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${input.accessToken}`,
+          },
+        },
+      ),
+    { label: "Feishu get record" },
+  );
+}
+
+async function findFeishuRecordByJobId(input: {
+  accessToken: string;
+  settings: AppSettings;
+  mapping: FeishuFieldMapping;
+  jobId: string;
+}) {
+  const jobIdField = input.mapping.jobId;
+  if (!jobIdField) {
+    return null;
+  }
+
+  let pageToken: string | null = null;
+  do {
+    const query = new URLSearchParams({ page_size: "500" });
+    if (pageToken) {
+      query.set("page_token", pageToken);
+    }
+
+    const data = await withFeishuRetry(
+      () =>
+        requestFeishuJson<FeishuRecordListResponse>(
+          `/open-apis/bitable/v1/apps/${input.settings.feishuBitableAppToken}/tables/${input.settings.feishuBitableTableId}/records?${query.toString()}`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${input.accessToken}`,
+            },
+          },
+        ),
+      { label: "Feishu list records" },
+    );
+
+    const matched = (data.items ?? []).find((item) => {
+      const value = item.fields?.[jobIdField];
+      if (typeof value === "string") {
+        return value.trim() === input.jobId;
+      }
+      if (Array.isArray(value)) {
+        return value.some((entry) => entry === input.jobId);
+      }
+      return false;
+    });
+
+    if (matched?.record_id) {
+      return matched;
+    }
+
+    pageToken = data.has_more ? data.page_token ?? null : null;
+  } while (pageToken);
+
+  return null;
+}
+
+async function resolveFeishuRecordState(input: {
+  accessToken: string;
+  settings: AppSettings;
+  mapping: FeishuFieldMapping;
+  job: JobRecord;
+}) {
+  const imageField = input.mapping.image;
+  let recordId = input.job.feishuRecordId ?? null;
+  let fileTokens = Array.from(new Set(input.job.feishuFileTokens));
+
+  if (!recordId && input.mapping.jobId) {
+    const matchedRecord = await findFeishuRecordByJobId({
+      accessToken: input.accessToken,
+      settings: input.settings,
+      mapping: input.mapping,
+      jobId: input.job.id,
+    });
+    if (matchedRecord?.record_id) {
+      recordId = matchedRecord.record_id;
+      fileTokens = imageField ? extractFileTokens(matchedRecord.fields?.[imageField]) : [];
+    }
+  }
+
+  if (recordId && fileTokens.length === 0) {
+    const existingRecord = await getFeishuRecordById({
+      accessToken: input.accessToken,
+      settings: input.settings,
+      recordId,
+    });
+    fileTokens = imageField ? extractFileTokens(existingRecord.record?.fields?.[imageField]) : [];
+  }
+
+  return {
+    recordId,
+    fileTokens,
+  };
+}
+
+async function upsertFeishuTaskRecord(input: {
+  accessToken: string;
+  settings: AppSettings;
+  mapping: FeishuFieldMapping;
+  details: JobDetails;
+  recordId: string | null;
+  fileTokens: string[];
+}) {
+  if (!input.recordId && input.fileTokens.length === 0) {
+    return {
+      recordId: null,
+      fileTokens: [],
+    };
+  }
+
+  const fields = buildTaskFields({
+    mapping: input.mapping,
+    job: input.details.job,
+    details: input.details,
+    fileTokens: input.fileTokens,
+  });
+
+  let recordId = input.recordId;
+  if (recordId) {
+    await updateFeishuRecord({
+      accessToken: input.accessToken,
+      settings: input.settings,
+      recordId,
+      fields,
+    });
+  } else {
+    const data = await createFeishuRecord({
+      accessToken: input.accessToken,
+      settings: input.settings,
+      fields,
+    });
+    recordId = data.record?.record_id ?? null;
+  }
+
+  return {
+    recordId,
+    fileTokens: input.fileTokens,
+  };
+}
+
+export async function syncJobToFeishu(input: {
+  settings: AppSettings;
+  details: JobDetails;
+  latestGeneratedAsset?: AssetRecord | null;
+  latestAssetBuffer?: Buffer | null;
 }) {
   if (!input.settings.feishuSyncEnabled) {
     return null;
@@ -423,67 +960,124 @@ export async function syncGeneratedImageToFeishu(input: {
   }
 
   const accessToken = await getFeishuTenantAccessToken(input.settings);
-  let fileToken: string;
+  const existingState = await resolveFeishuRecordState({
+    accessToken,
+    settings: input.settings,
+    mapping,
+    job: input.details.job,
+  });
+  let recordId = existingState.recordId;
+  let fileTokens = existingState.fileTokens;
+
+  if (input.latestGeneratedAsset && input.latestAssetBuffer) {
+    let fileToken: string;
+    try {
+      fileToken = await uploadAssetToFeishuBitable({
+        accessToken,
+        settings: input.settings,
+        asset: input.latestGeneratedAsset,
+        buffer: input.latestAssetBuffer,
+      });
+    } catch (error) {
+      const sizeMb = (input.latestAssetBuffer.byteLength / (1024 * 1024)).toFixed(2);
+      throw new Error(
+        `Feishu image upload failed for ${input.latestGeneratedAsset.originalName} (${sizeMb} MB): ${
+          error instanceof Error ? error.message : "Unknown upload error."
+        }`,
+      );
+    }
+
+    fileTokens = Array.from(new Set([...fileTokens, fileToken]));
+  }
+
+  if (!recordId && fileTokens.length === 0) {
+    return null;
+  }
+
   try {
-    fileToken = await uploadAssetToFeishuBitable({
+    return await upsertFeishuTaskRecord({
       accessToken,
       settings: input.settings,
-      asset: input.asset,
-      buffer: input.assetBuffer,
+      mapping,
+      details: input.details,
+      recordId,
+      fileTokens,
     });
   } catch (error) {
-    const sizeMb = (input.assetBuffer.byteLength / (1024 * 1024)).toFixed(2);
     throw new Error(
-      `Feishu image upload failed for ${input.asset.originalName} (${sizeMb} MB): ${
-        error instanceof Error ? error.message : "Unknown upload error."
-      }`,
+      `Feishu record sync failed: ${error instanceof Error ? error.message : "Unknown record sync error."}`,
     );
   }
+}
 
-  const fields: Record<string, unknown> = {};
-  putField(fields, mapping, "title", buildRecordTitle(input.job, input.item));
-  putField(fields, mapping, "image", [{ file_token: fileToken }]);
-  putField(fields, mapping, "prompt", input.promptText);
-  putField(fields, mapping, "negativePrompt", input.negativePrompt);
-  putField(fields, mapping, "status", "completed");
-  putField(fields, mapping, "mode", buildModeLabel(input.job.creationMode));
-  putField(fields, mapping, "platform", input.job.platform);
-  putField(fields, mapping, "country", input.job.country);
-  putField(fields, mapping, "language", input.job.language);
-  putField(fields, mapping, "ratio", input.item.ratio);
-  putField(fields, mapping, "resolution", input.item.resolutionLabel);
-  putField(fields, mapping, "requestedSize", `${input.item.width}×${input.item.height}`);
-  putField(
-    fields,
+export async function rebuildJobFeishuSync(input: {
+  settings: AppSettings;
+  details: JobDetails;
+}) {
+  if (!input.settings.feishuSyncEnabled) {
+    return null;
+  }
+
+  const mapping = parseFeishuFieldMapping(input.settings.feishuFieldMappingJson);
+  if (!mapping.image) {
+    throw new Error("Feishu image field mapping is required.");
+  }
+
+  const accessToken = await getFeishuTenantAccessToken(input.settings);
+  const { readAssetBuffer } = await import("@/lib/storage");
+  const existingState = await resolveFeishuRecordState({
+    accessToken,
+    settings: input.settings,
     mapping,
-    "actualSize",
-    input.asset.width && input.asset.height ? `${input.asset.width}×${input.asset.height}` : null,
-  );
-  putField(fields, mapping, "jobId", input.job.id);
-  putField(fields, mapping, "itemId", input.item.id);
-  putField(fields, mapping, "createdAt", input.asset.createdAt);
+    job: input.details.job,
+  });
+  const fileTokens: string[] = [];
+  const itemResults: Array<{ itemId: string; ok: boolean; message?: string }> = [];
 
-  let data: FeishuRecordResponse;
+  for (const item of input.details.items) {
+    if (!item.generatedAsset || item.status !== "completed") {
+      continue;
+    }
+
+    try {
+      const buffer = await readAssetBuffer(item.generatedAsset);
+      const fileToken = await uploadAssetToFeishuBitable({
+        accessToken,
+        settings: input.settings,
+        asset: item.generatedAsset,
+        buffer,
+      });
+      fileTokens.push(fileToken);
+      itemResults.push({ itemId: item.id, ok: true });
+    } catch (error) {
+      const sizeMb = (item.generatedAsset.sizeBytes / (1024 * 1024)).toFixed(2);
+      itemResults.push({
+        itemId: item.id,
+        ok: false,
+        message: `Feishu image upload failed for ${item.generatedAsset.originalName} (${sizeMb} MB): ${
+          error instanceof Error ? error.message : "Unknown upload error."
+        }`,
+      });
+    }
+  }
+
   try {
-    data = await requestFeishuJson<FeishuRecordResponse>(
-      `/open-apis/bitable/v1/apps/${input.settings.feishuBitableAppToken}/tables/${input.settings.feishuBitableTableId}/records`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json; charset=utf-8",
-        },
-        body: JSON.stringify({ fields }),
-      },
-    );
+    const upserted = await upsertFeishuTaskRecord({
+      accessToken,
+      settings: input.settings,
+      mapping,
+      details: input.details,
+      recordId: existingState.recordId,
+      fileTokens,
+    });
+
+    return {
+      ...upserted,
+      itemResults,
+    };
   } catch (error) {
     throw new Error(
-      `Feishu record creation failed: ${error instanceof Error ? error.message : "Unknown record creation error."}`,
+      `Feishu record sync failed: ${error instanceof Error ? error.message : "Unknown record sync error."}`,
     );
   }
-
-  return {
-    recordId: data.record?.record_id ?? null,
-    fileToken,
-  };
 }

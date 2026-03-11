@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getSettings, updateSettings } from "@/lib/db";
-import { parseFeishuFieldMapping } from "@/lib/feishu";
+import { formatFeishuFieldMapping, parseFeishuFieldMapping } from "@/lib/feishu-field-mapping";
 import { testProviderConnection } from "@/lib/gemini";
 import type { AppSettings } from "@/lib/types";
 
@@ -36,5 +36,11 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid headers JSON." }, { status: 400 });
   }
 
-  return NextResponse.json(updateSettings(body));
+  const normalizedBody = {
+    ...body,
+    feishuFieldMappingJson:
+      body.feishuFieldMappingJson === undefined ? undefined : formatFeishuFieldMapping(body.feishuFieldMappingJson),
+  };
+
+  return NextResponse.json(updateSettings(normalizedBody));
 }

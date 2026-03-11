@@ -22,6 +22,7 @@ import type {
   TemplateFilters,
   TemplateInput,
   TemplateRecord,
+  JobPreviewAsset,
   UiLanguage,
 } from "@/lib/types";
 import { createId, detectImageDimensions, fromJson, nowIso, toJson } from "@/lib/utils";
@@ -91,6 +92,9 @@ function rowToJob(row: any): JobRecord {
     creationMode: row.creation_mode ?? "standard",
     referenceStrength: row.reference_strength ?? "balanced",
     preserveReferenceText: Boolean(row.preserve_reference_text ?? 1),
+    generatedCount: Number(row.generated_count ?? 0),
+    succeededCount: Number(row.succeeded_count ?? 0),
+    failedCount: Number(row.failed_count ?? 0),
     productName: row.product_name,
     sku: row.sku,
     category: row.category,
@@ -123,8 +127,31 @@ function rowToJob(row: any): JobRecord {
     referencePosterCopyOverride: fromJson<ReferencePosterCopy | null>(row.reference_poster_copy_override_json, null),
     referenceLayoutAnalysis: fromJson<ReferenceLayoutAnalysis | null>(row.reference_layout_analysis_json, null),
     referencePosterCopy: fromJson<ReferencePosterCopy | null>(row.reference_poster_copy_json, null),
+    feishuRecordId: row.feishu_record_id ?? null,
+    feishuFileTokens: fromJson<string[]>(row.feishu_file_tokens_json, []),
+    previewAssets: [],
+    previewImageCount: 0,
   };
 }
+
+const JOB_LIST_SELECT = `
+  SELECT
+    jobs.*,
+    COALESCE(job_stats.generated_count, 0) AS generated_count,
+    COALESCE(job_stats.succeeded_count, 0) AS succeeded_count,
+    COALESCE(job_stats.failed_count, 0) AS failed_count
+  FROM jobs
+  LEFT JOIN (
+    SELECT
+      job_id,
+      COUNT(*) AS generated_count,
+      SUM(CASE WHEN generated_asset_id IS NOT NULL OR layout_asset_id IS NOT NULL THEN 1 ELSE 0 END) AS succeeded_count,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+    FROM job_items
+    GROUP BY job_id
+  ) AS job_stats
+    ON job_stats.job_id = jobs.id
+`;
 
 function rowToItem(row: any): JobItemRecord {
   return {
@@ -168,6 +195,79 @@ function rowToAsset(row: any): AssetRecord {
     sha256: row.sha256,
     createdAt: row.created_at,
   };
+}
+
+function rowToJobPreviewAsset(row: any): JobPreviewAsset {
+  return {
+    id: row.id,
+    jobItemId: row.job_item_id,
+    imageType: row.image_type,
+    ratio: row.ratio,
+    resolutionLabel: row.resolution_label,
+    originalName: row.original_name,
+    width: row.width ?? null,
+    height: row.height ?? null,
+  };
+}
+
+function attachJobPreviewAssets(jobs: JobRecord[]): JobRecord[] {
+  if (!jobs.length) {
+    return jobs;
+  }
+
+  const database = getDb();
+  const placeholders = jobs.map(() => "?").join(", ");
+  const rows = database
+    .prepare(
+      `SELECT
+        preview.job_id,
+        preview.total_count,
+        preview.job_item_id,
+        preview.image_type,
+        preview.ratio,
+        preview.resolution_label,
+        assets.id,
+        assets.original_name,
+        assets.width,
+        assets.height
+      FROM (
+        SELECT
+          job_id,
+          id AS job_item_id,
+          image_type,
+          ratio,
+          resolution_label,
+          generated_asset_id,
+          ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY created_at ASC) AS row_number,
+          COUNT(*) OVER (PARTITION BY job_id) AS total_count
+        FROM job_items
+        WHERE generated_asset_id IS NOT NULL
+          AND job_id IN (${placeholders})
+      ) AS preview
+      INNER JOIN assets
+        ON assets.id = preview.generated_asset_id
+      WHERE preview.row_number <= 8
+      ORDER BY preview.job_id ASC, preview.row_number ASC`,
+    )
+    .all(...jobs.map((job) => job.id)) as Array<any>;
+
+  const previewMap = new Map<string, { assets: JobPreviewAsset[]; totalCount: number }>();
+
+  for (const row of rows) {
+    const current = previewMap.get(row.job_id) ?? { assets: [], totalCount: 0 };
+    current.assets.push(rowToJobPreviewAsset(row));
+    current.totalCount = Number(row.total_count ?? current.assets.length);
+    previewMap.set(row.job_id, current);
+  }
+
+  return jobs.map((job) => {
+    const preview = previewMap.get(job.id);
+    return {
+      ...job,
+      previewAssets: preview?.assets ?? [],
+      previewImageCount: preview?.totalCount ?? 0,
+    };
+  });
 }
 
 function ensureActualAssetDimensions(asset: AssetRecord): AssetRecord {
@@ -372,6 +472,14 @@ function ensureJobColumns(database: DatabaseSync) {
       name: "reference_poster_copy_json",
       statement: "ALTER TABLE jobs ADD COLUMN reference_poster_copy_json TEXT",
     },
+    {
+      name: "feishu_record_id",
+      statement: "ALTER TABLE jobs ADD COLUMN feishu_record_id TEXT",
+    },
+    {
+      name: "feishu_file_tokens_json",
+      statement: "ALTER TABLE jobs ADD COLUMN feishu_file_tokens_json TEXT NOT NULL DEFAULT '[]'",
+    },
   ];
 
   for (const column of columnDefinitions) {
@@ -444,7 +552,9 @@ function ensureSchema(database: DatabaseSync) {
       reference_layout_override_json TEXT,
       reference_poster_copy_override_json TEXT,
       reference_layout_analysis_json TEXT,
-      reference_poster_copy_json TEXT
+      reference_poster_copy_json TEXT,
+      feishu_record_id TEXT,
+      feishu_file_tokens_json TEXT NOT NULL DEFAULT '[]'
     );
 
     CREATE TABLE IF NOT EXISTS job_items (
@@ -559,31 +669,42 @@ function ensureSchema(database: DatabaseSync) {
       );
   }
 
-  const existingTemplates = database.prepare("SELECT COUNT(*) as count FROM templates").get() as { count: number };
-  if (existingTemplates.count === 0) {
-    const insert = database.prepare(
-      `INSERT INTO templates (
-        id, name, country, language, platform, category, image_type, prompt_template, copy_template, layout_style, is_default, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
+  ensureDefaultTemplateSeeds(database);
+}
 
-    for (const template of getTemplateSeedData()) {
-      insert.run(
-        template.id,
-        template.name,
-        template.country,
-        template.language,
-        template.platform,
-        template.category,
-        template.imageType,
-        template.promptTemplate,
-        template.copyTemplate,
-        template.layoutStyle,
-        template.isDefault ? 1 : 0,
-        template.createdAt,
-        template.updatedAt,
-      );
+function ensureDefaultTemplateSeeds(database: DatabaseSync) {
+  const existingDefaultTypes = new Set(
+    (
+      database.prepare("SELECT image_type FROM templates WHERE is_default = 1").all() as Array<{ image_type: string }>
+    ).map((row) => row.image_type),
+  );
+
+  const insert = database.prepare(
+    `INSERT INTO templates (
+      id, name, country, language, platform, category, image_type, prompt_template, copy_template, layout_style, is_default, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+
+  for (const template of getTemplateSeedData()) {
+    if (existingDefaultTypes.has(template.imageType)) {
+      continue;
     }
+
+    insert.run(
+      template.id,
+      template.name,
+      template.country,
+      template.language,
+      template.platform,
+      template.category,
+      template.imageType,
+      template.promptTemplate,
+      template.copyTemplate,
+      template.layoutStyle,
+      template.isDefault ? 1 : 0,
+      template.createdAt,
+      template.updatedAt,
+    );
   }
 }
 
@@ -1118,13 +1239,13 @@ export function listJobs(filters: JobListFilters = {}): JobRecord[] {
   }
 
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const statement = database.prepare(`SELECT * FROM jobs ${where} ORDER BY created_at DESC LIMIT 200`);
-  return (statement.all(...values) as any[]).map(rowToJob);
+  const statement = database.prepare(`${JOB_LIST_SELECT} ${where} ORDER BY jobs.created_at DESC LIMIT 200`);
+  return attachJobPreviewAssets((statement.all(...values) as any[]).map(rowToJob));
 }
 
 export function listRecentJobs(limit = 6): JobRecord[] {
   const database = getDb();
-  return (database.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?").all(limit) as any[]).map(rowToJob);
+  return (database.prepare(`${JOB_LIST_SELECT} ORDER BY jobs.created_at DESC LIMIT ?`).all(limit) as any[]).map(rowToJob);
 }
 
 export function getAssetById(assetId: string): AssetRecord | null {
@@ -1159,6 +1280,13 @@ export function updateJobReferenceArtifacts(
       "UPDATE jobs SET reference_layout_analysis_json = ?, reference_poster_copy_json = ?, updated_at = ? WHERE id = ?",
     )
     .run(toJson(referenceLayoutAnalysis), toJson(referencePosterCopy), nowIso(), jobId);
+}
+
+export function updateJobFeishuSyncState(jobId: string, recordId: string | null, fileTokens: string[]) {
+  const database = getDb();
+  database
+    .prepare("UPDATE jobs SET feishu_record_id = ?, feishu_file_tokens_json = ?, updated_at = ? WHERE id = ?")
+    .run(recordId, toJson(fileTokens), nowIso(), jobId);
 }
 
 export function updateJobItemProcessing(itemId: string) {
@@ -1203,6 +1331,11 @@ export function updateJobItemResult(input: {
       nowIso(),
       input.itemId,
     );
+}
+
+export function updateJobItemWarning(itemId: string, warningMessage: string | null) {
+  const database = getDb();
+  database.prepare("UPDATE job_items SET warning_message = ?, updated_at = ? WHERE id = ?").run(warningMessage, nowIso(), itemId);
 }
 
 export function updateJobItemFailure(

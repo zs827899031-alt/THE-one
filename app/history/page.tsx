@@ -1,4 +1,5 @@
-﻿import { JobTable } from "@/components/job-table";
+import { JobTable } from "@/components/job-table";
+import { StatCard } from "@/components/stat-card";
 import {
   COUNTRIES,
   OUTPUT_LANGUAGES,
@@ -27,13 +28,21 @@ export default async function HistoryPage({
     dateTo: typeof params.dateTo === "string" ? params.dateTo : undefined,
   });
 
+  const totalGenerated = jobs.reduce((sum, job) => sum + job.generatedCount, 0);
+  const totalSucceeded = jobs.reduce((sum, job) => sum + job.succeededCount, 0);
+  const totalFailed = jobs.reduce((sum, job) => sum + job.failedCount, 0);
+
   return (
     <div className="stack gap-24">
       <section className="panel">
         <p className="eyebrow">{t(language, "navHistory")}</p>
         <h2>{t(language, "historyTitle")}</h2>
         <form className="filter-grid" method="get">
-          <input defaultValue={typeof params.search === "string" ? params.search : ""} name="search" placeholder={language === "zh" ? "搜索商品名 / SKU" : "Search product / SKU"} />
+          <input
+            defaultValue={typeof params.search === "string" ? params.search : ""}
+            name="search"
+            placeholder={language === "zh" ? "搜索商品名 / SKU" : "Search product / SKU"}
+          />
           <select defaultValue={typeof params.platform === "string" ? params.platform : ""} name="platform">
             <option value="">{language === "zh" ? "全部平台" : "All platforms"}</option>
             {PLATFORMS.map((option) => (
@@ -72,8 +81,26 @@ export default async function HistoryPage({
             {t(language, "filters")}
           </button>
         </form>
+        <div className="stats-grid history-summary-grid">
+          <StatCard accent="#60a5fa" label={language === "zh" ? "任务总数" : "Total jobs"} value={jobs.length.toString()} />
+          <StatCard accent="#38bdf8" label={language === "zh" ? "生成张数" : "Generated variants"} value={totalGenerated.toString()} />
+          <StatCard accent="#34d399" label={language === "zh" ? "成功张数" : "Successful variants"} value={totalSucceeded.toString()} />
+          <StatCard accent="#fb7185" label={language === "zh" ? "失败张数" : "Failed variants"} value={totalFailed.toString()} />
+        </div>
       </section>
-      <section className="panel">{jobs.length ? <JobTable jobs={jobs} language={language} /> : <p>{t(language, "emptyJobs")}</p>}</section>
+      <section className="panel history-table-panel">
+        <div className="split-header compact">
+          <div>
+            <h3>{language === "zh" ? "任务明细" : "Job breakdown"}</h3>
+            <p className="helper history-table-helper">
+              {language === "zh"
+                ? "先看统计胶囊，再用下面的紧凑表格浏览任务模式、生成统计、状态和时间。"
+                : "Use the summary pills first, then scan the compact table for mode, counts, status, and created time."}
+            </p>
+          </div>
+        </div>
+        {jobs.length ? <JobTable jobs={jobs} language={language} /> : <p>{t(language, "emptyJobs")}</p>}
+      </section>
     </div>
   );
 }

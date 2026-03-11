@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { type FormEvent, useMemo, useState, useTransition } from "react";
 
+import { formatFeishuFieldMapping, getRecommendedFeishuFieldMappingJson } from "@/lib/feishu-field-mapping";
 import type { AppSettings, UiLanguage } from "@/lib/types";
 
 export function SettingsForm({ initialSettings, language }: { initialSettings: AppSettings; language: UiLanguage }) {
@@ -12,6 +13,7 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
   const [isPending, startTransition] = useTransition();
   const [isTestingProvider, startProviderTestTransition] = useTransition();
   const [isTestingFeishu, startFeishuTestTransition] = useTransition();
+  const recommendedFeishuMappingJson = useMemo(() => getRecommendedFeishuFieldMappingJson(), []);
 
   const text = useMemo(
     () =>
@@ -20,6 +22,19 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
             sections: {
               gemini: "Gemini / 中转设置",
               feishu: "飞书多维表格同步",
+            },
+            guides: {
+              title: "接入说明",
+              gemini: [
+                "官方 Gemini：只填 API Key，Base URL 留空。",
+                "兼容中转：填写 API Key 与 Base URL，必要时补请求头 JSON。",
+                "保存后先点“测试 Gemini / 中转”确认可用。",
+              ],
+              feishu: [
+                "开放平台应用里获取 App ID 与 App Secret。",
+                "从多维表格链接获取 App Token 和 Table ID。",
+                "字段映射至少保留 title 与 image，再测试飞书连接。",
+              ],
             },
             labels: {
               defaultApiKey: "默认 API Key",
@@ -52,6 +67,8 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
               feishuOk: "飞书连接成功",
               feishuFailed: "飞书连接失败",
               unknownError: "未知错误",
+              fillRecommendedMapping: "填入推荐模板",
+              formatMapping: "格式化映射",
             },
             hints: {
               baseUrl: "留空表示使用 Google 官方 Gemini API；如使用中转站，请填写对方提供的 base_url。",
@@ -59,15 +76,30 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
               version: "大多数 Gemini 兼容中转使用 v1beta。",
               feishuEnable: "开启后，生成成功的图片会自动创建飞书多维表格记录，并上传到图片字段。",
               feishuToken: "可在飞书开放平台和多维表格链接中获取。",
-              feishuParentType: "默认使用 bitable_image。若你的应用要求不同，可在这里改。",
+              feishuParentType: "默认使用 bitable_image。若你的应用要求不同，可在这里修改。",
               feishuMapping:
-                '只会写入你配置过的字段。示例：{"title":"标题","image":"生成图片","prompt":"提示词","platform":"平台"}',
+                "只会写入你配置过的字段。推荐先保留标题、生成图片、创作模式、平台、国家、语言、比例、分辨率、生成时间，再按需增加提示词等长文本字段。",
+              feishuSupportedFields:
+                "支持字段键：title、image、mode、platform、country、language、ratio、resolution、requestedSize、actualSize、status、prompt、negativePrompt、createdAt、jobId、itemId。",
             },
           }
         : {
             sections: {
               gemini: "Gemini / relay settings",
               feishu: "Feishu Bitable sync",
+            },
+            guides: {
+              title: "Quick setup",
+              gemini: [
+                "Official Gemini: fill only the API key and leave Base URL empty.",
+                "Relay mode: fill API key and Base URL, then add headers JSON only if required.",
+                "Save first, then run “Test Gemini / relay”.",
+              ],
+              feishu: [
+                "Get the App ID and App Secret from the Feishu developer console.",
+                "Get the App Token and Table ID from your Bitable URL.",
+                "Keep at least title and image mapped before testing the connection.",
+              ],
             },
             labels: {
               defaultApiKey: "Default API key",
@@ -100,6 +132,8 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
               feishuOk: "Feishu connection succeeded",
               feishuFailed: "Feishu connection failed",
               unknownError: "Unknown error",
+              fillRecommendedMapping: "Use recommended template",
+              formatMapping: "Format mapping",
             },
             hints: {
               baseUrl: "Leave blank for the official Google Gemini API. For a relay, paste the provider's base_url here.",
@@ -109,7 +143,9 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
               feishuToken: "You can find these in the Feishu developer console and the Bitable URL.",
               feishuParentType: "Defaults to bitable_image. Change it only if your Feishu app requires another upload parent type.",
               feishuMapping:
-                'Only mapped fields will be written. Example: {"title":"Title","image":"Generated Image","prompt":"Prompt","platform":"Platform"}',
+                "Only mapped fields will be written. Start with title, generated image, mode, platform, country, language, ratio, resolution, and created time. Add long-text fields like prompt only when you really need them.",
+              feishuSupportedFields:
+                "Supported keys: title, image, mode, platform, country, language, ratio, resolution, requestedSize, actualSize, status, prompt, negativePrompt, createdAt, jobId, itemId.",
             },
           },
     [language],
@@ -121,7 +157,7 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
 
   async function handleJsonRequest(
     url: string,
-    onMessage: (message: string) => void,
+    onMessage: (nextMessage: string) => void,
     okPrefix: string,
     failedPrefix: string,
   ) {
@@ -142,7 +178,7 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
     onMessage(`${okPrefix}: ${body?.result ?? "OK"}`);
   }
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMessage("");
 
@@ -161,6 +197,10 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
         return;
       }
 
+      const body = (await response.json().catch(() => null)) as AppSettings | null;
+      if (body?.feishuFieldMappingJson) {
+        setFormState(body);
+      }
       setMessage(text.actions.saved);
     });
   }
@@ -189,11 +229,35 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
     });
   }
 
+  function handleFillRecommendedMapping() {
+    patchSettings({ feishuFieldMappingJson: recommendedFeishuMappingJson });
+    setFeishuTestMessage("");
+    setMessage("");
+  }
+
+  function handleFormatMapping() {
+    try {
+      patchSettings({ feishuFieldMappingJson: formatFeishuFieldMapping(formState.feishuFieldMappingJson) });
+      setFeishuTestMessage("");
+      setMessage("");
+    } catch (error) {
+      setFeishuTestMessage(error instanceof Error ? error.message : text.actions.unknownError);
+    }
+  }
+
   return (
     <form className="panel form-panel settings-form-panel" onSubmit={handleSubmit}>
       <div className="settings-section">
         <div className="settings-section-header">
           <h3>{text.sections.gemini}</h3>
+          <aside className="settings-guide-card">
+            <strong>{text.guides.title}</strong>
+            <ul>
+              {text.guides.gemini.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </aside>
         </div>
         <label>
           <span>{text.labels.defaultApiKey}</span>
@@ -255,6 +319,14 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
       <div className="settings-section">
         <div className="settings-section-header">
           <h3>{text.sections.feishu}</h3>
+          <aside className="settings-guide-card">
+            <strong>{text.guides.title}</strong>
+            <ul>
+              {text.guides.feishu.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </aside>
         </div>
         <label className="settings-checkbox-row">
           <input
@@ -302,12 +374,22 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
         </label>
         <label>
           <span>{text.labels.feishuFieldMappingJson}</span>
+          <div className="button-row">
+            <button className="ghost-button mini-button" onClick={handleFillRecommendedMapping} type="button">
+              {text.actions.fillRecommendedMapping}
+            </button>
+            <button className="ghost-button mini-button" onClick={handleFormatMapping} type="button">
+              {text.actions.formatMapping}
+            </button>
+          </div>
           <textarea
-            rows={10}
+            rows={12}
+            placeholder={recommendedFeishuMappingJson}
             value={formState.feishuFieldMappingJson}
             onChange={(event) => patchSettings({ feishuFieldMappingJson: event.target.value })}
           />
           <small className="helper">{text.hints.feishuMapping}</small>
+          <small className="helper">{text.hints.feishuSupportedFields}</small>
         </label>
         <div className="button-row">
           <button className="ghost-button" disabled={isTestingFeishu} onClick={handleFeishuTest} type="button">

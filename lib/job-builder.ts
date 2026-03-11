@@ -8,28 +8,72 @@ import type {
   ReferencePosterCopy,
   UiLanguage,
 } from "@/lib/types";
+import { buildCompositeSourceDescription } from "@/lib/creative-fields";
 import { createId, dimensionsForVariant, nowIso } from "@/lib/utils";
 
-function inferPromptJobName(payload: CreatePayload) {
+function normalizeJobNameCandidate(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, 48);
+}
+
+function inferNameFromAssets(...groups: AssetRecord[][]) {
+  for (const group of groups) {
+    for (const asset of group) {
+      const candidate = normalizeJobNameCandidate(asset.originalName.replace(/\.[^.]+$/, ""));
+      if (candidate) {
+        return candidate;
+      }
+    }
+  }
+
+  return "";
+}
+
+function inferJobName(payload: CreatePayload, sourceAssets: AssetRecord[], referenceAssets: AssetRecord[]) {
   const explicitName = payload.productName.trim();
   if (explicitName) {
     return explicitName;
   }
 
-  if (payload.creationMode !== "prompt") {
+  if (payload.creationMode === "standard") {
     return explicitName;
   }
 
-  const normalized = (payload.customPrompt ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 36);
+  if (payload.creationMode === "suite") {
+    const fallbackText =
+      normalizeJobNameCandidate(payload.brandName) ||
+      normalizeJobNameCandidate(payload.category) ||
+      normalizeJobNameCandidate(payload.sourceDescription) ||
+      normalizeJobNameCandidate(payload.sellingPoints);
+
+    return fallbackText || inferNameFromAssets(sourceAssets, referenceAssets) || "Image set job";
+  }
+
+  if (payload.creationMode === "amazon-a-plus") {
+    const fallbackText =
+      normalizeJobNameCandidate(payload.brandName) ||
+      normalizeJobNameCandidate(payload.category) ||
+      normalizeJobNameCandidate(payload.sourceDescription) ||
+      normalizeJobNameCandidate(payload.sellingPoints);
+
+    return fallbackText || inferNameFromAssets(sourceAssets, referenceAssets) || "Amazon A+ job";
+  }
+
+  if (payload.creationMode === "reference-remix") {
+    const fallbackText =
+      normalizeJobNameCandidate(payload.sourceDescription) ||
+      normalizeJobNameCandidate(payload.sellingPoints) ||
+      normalizeJobNameCandidate(payload.brandName);
+
+    return fallbackText || inferNameFromAssets(sourceAssets, referenceAssets) || "Reference remix job";
+  }
+
+  const normalized = normalizeJobNameCandidate(payload.customPrompt ?? "");
 
   return normalized || "Prompt job";
 }
 
 export interface CreatePayload {
-  creationMode?: "standard" | "reference-remix" | "prompt";
+  creationMode?: "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
   referenceStrength?: "reference" | "balanced" | "product";
   preserveReferenceText?: boolean;
   productName: string;
@@ -39,6 +83,8 @@ export interface CreatePayload {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
   customPrompt?: string;
   customNegativePrompt?: string;
   autoOptimizePrompt?: boolean;
@@ -124,7 +170,7 @@ export function buildCreateJobInput(
     creationMode: payload.creationMode ?? "standard",
     referenceStrength: payload.referenceStrength ?? "balanced",
     preserveReferenceText: payload.preserveReferenceText ?? true,
-    productName: inferPromptJobName(payload),
+    productName: inferJobName(payload, sourceAssets, referenceAssets),
     sku: payload.sku,
     category: payload.category,
     brandName: payload.brandName,
@@ -144,7 +190,11 @@ export function buildCreateJobInput(
     variantsPerType: payload.variantsPerType,
     includeCopyLayout: payload.includeCopyLayout,
     batchFileCount: sourceAssets.length,
-    sourceDescription: payload.sourceDescription,
+    sourceDescription: buildCompositeSourceDescription({
+      sourceDescription: payload.sourceDescription,
+      materialInfo: payload.materialInfo,
+      sizeInfo: payload.sizeInfo,
+    }),
     uiLanguage: payload.uiLanguage,
     selectedTemplateOverrides: payload.selectedTemplateOverrides ?? {},
     referenceLayoutOverride: payload.referenceLayoutOverride ?? null,

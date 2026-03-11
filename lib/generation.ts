@@ -9,7 +9,9 @@ import {
   translateUserPromptInputs,
   translateCreativeInputs,
 } from "@/lib/gemini";
-import { syncGeneratedImageToFeishu } from "@/lib/feishu";
+import { splitCompositeSourceDescription } from "@/lib/creative-fields";
+import { syncJobToFeishu } from "@/lib/feishu";
+import { buildProviderDimensionWarning } from "@/lib/image-size-policy";
 import { createPosterSvg } from "@/lib/poster";
 import {
   getAssetById,
@@ -21,9 +23,11 @@ import {
   insertAsset,
   listJobItems,
   resolveTemplate,
+  updateJobFeishuSyncState,
   updateJobItemFailure,
   updateJobItemProcessing,
   updateJobItemResult,
+  updateJobItemWarning,
   updateJobLocalizedInputs,
   updateJobReferenceArtifacts,
   updateJobStatus,
@@ -32,9 +36,10 @@ import { readAssetBuffer, writeFileAsset } from "@/lib/storage";
 import type { AssetRecord, ProviderDebugInfo, ProviderOverride } from "@/lib/types";
 import { buildPromptModeCopyBundle } from "@/lib/templates";
 
-function ratioDelta(actualWidth: number, actualHeight: number, requestedWidth: number, requestedHeight: number) {
+function ratioDelta(actualWidth: number, actualHeight: number, requestedRatio: string) {
+  const [requestedWidth, requestedHeight] = requestedRatio.split(":").map(Number);
   const actual = actualWidth / actualHeight;
-  const requested = requestedWidth / requestedHeight;
+  const requested = (requestedWidth || 1) / (requestedHeight || 1);
   return Math.abs(actual - requested);
 }
 
@@ -50,10 +55,9 @@ function buildDimensionWarning(input: {
     return null;
   }
 
-  const sizeMismatch = input.actualWidth !== input.requestedWidth || input.actualHeight !== input.requestedHeight;
-  const aspectMismatch = ratioDelta(input.actualWidth, input.actualHeight, input.requestedWidth, input.requestedHeight) > 0.01;
+  const aspectMismatch = ratioDelta(input.actualWidth, input.actualHeight, input.requestedRatio) > 0.01;
 
-  if (!sizeMismatch && !aspectMismatch) {
+  if (!aspectMismatch) {
     return null;
   }
 
@@ -90,6 +94,22 @@ function extensionForMimeType(mimeType: string) {
   }
 }
 
+async function syncJobSummaryToFeishu(jobId: string, settings = getSettings()) {
+  const details = getJobDetails(jobId);
+  if (!details) {
+    return;
+  }
+
+  const feishuState = await syncJobToFeishu({
+    settings,
+    details,
+  });
+
+  if (feishuState) {
+    updateJobFeishuSyncState(jobId, feishuState.recordId, feishuState.fileTokens);
+  }
+}
+
 export async function processJob(jobId: string, providerOverride?: ProviderOverride) {
   const job = getJobById(jobId);
   if (!job) {
@@ -120,6 +140,7 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
   let failureCount = 0;
   let firstFailureMessage: string | null = null;
   const failureDebugs: Array<ProviderDebugInfo | null> = [];
+  const rawCreativeFields = splitCompositeSourceDescription(job.sourceDescription);
 
   const localizedInputs =
     job.creationMode === "prompt"
@@ -139,7 +160,9 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
           productName: job.productName,
           sellingPoints: job.sellingPoints,
           restrictions: job.restrictions,
-          sourceDescription: job.sourceDescription,
+          sourceDescription: rawCreativeFields.sourceDescription,
+          materialInfo: rawCreativeFields.materialInfo,
+          sizeInfo: rawCreativeFields.sizeInfo,
         }).catch(() => null);
   updateJobLocalizedInputs(jobId, localizedInputs);
 
@@ -166,7 +189,9 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
     productName: localizedInputs?.productName || job.productName,
     sellingPoints: localizedInputs?.sellingPoints || job.sellingPoints,
     restrictions: localizedInputs?.restrictions || job.restrictions,
-    sourceDescription: localizedInputs?.sourceDescription || job.sourceDescription,
+    sourceDescription: localizedInputs?.sourceDescription || rawCreativeFields.sourceDescription,
+    materialInfo: localizedInputs?.materialInfo || rawCreativeFields.materialInfo,
+    sizeInfo: localizedInputs?.sizeInfo || rawCreativeFields.sizeInfo,
   };
   const brandProfile = job.brandName ? getBrandByName(job.brandName) : null;
   let referenceLayoutAnalysis = job.referenceLayoutAnalysis;
@@ -296,6 +321,8 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
               sellingPoints: effectiveInputs.sellingPoints,
               restrictions: effectiveInputs.restrictions,
               sourceDescription: effectiveInputs.sourceDescription,
+              materialInfo: effectiveInputs.materialInfo,
+              sizeInfo: effectiveInputs.sizeInfo,
               brandProfile,
               imageType: item.imageType,
               ratio: item.ratio,
@@ -321,6 +348,8 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
                 sellingPoints: effectiveInputs.sellingPoints,
                 restrictions: effectiveInputs.restrictions,
                 sourceDescription: effectiveInputs.sourceDescription,
+                materialInfo: effectiveInputs.materialInfo,
+                sizeInfo: effectiveInputs.sizeInfo,
                 imageType: item.imageType,
                 ratio: item.ratio,
                 resolutionLabel: item.resolutionLabel,
@@ -356,6 +385,8 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         sellingPoints: effectiveInputs.sellingPoints,
         restrictions: effectiveInputs.restrictions,
         sourceDescription: effectiveInputs.sourceDescription,
+        materialInfo: effectiveInputs.materialInfo,
+        sizeInfo: effectiveInputs.sizeInfo,
         brandProfile,
         imageType: item.imageType,
         ratio: item.ratio,
@@ -418,15 +449,12 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         height: item.height,
       });
       insertAsset(generatedAsset);
-      const dimensionWarning = buildDimensionWarning({
+      const dimensionWarning = buildProviderDimensionWarning({
         requestedRatio: item.ratio,
         requestedResolutionLabel: item.resolutionLabel,
-        requestedWidth: item.width,
-        requestedHeight: item.height,
         actualWidth: generatedAsset.width,
         actualHeight: generatedAsset.height,
       });
-      let syncWarning: string | null = null;
 
       let layoutAsset: AssetRecord | null = null;
       if (job.includeCopyLayout) {
@@ -453,25 +481,6 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         insertAsset(layoutAsset);
       }
 
-      try {
-        await syncGeneratedImageToFeishu({
-          settings,
-          asset: generatedAsset,
-          assetBuffer: generated.buffer,
-          job,
-          item,
-          promptText: generated.promptText || copy.optimizedPrompt,
-          negativePrompt:
-            job.creationMode === "prompt"
-              ? translatedPromptInputs?.customNegativePrompt || job.customNegativePrompt
-              : null,
-        });
-      } catch (syncError) {
-        syncWarning = `Feishu sync failed: ${syncError instanceof Error ? syncError.message : "Unknown error."}`;
-      }
-
-      const warningMessage = [dimensionWarning, syncWarning].filter(Boolean).join(" | ") || null;
-
       updateJobItemResult({
         itemId: item.id,
         promptText: generated.promptText || copy.optimizedPrompt,
@@ -482,7 +491,7 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         copy,
         generatedAssetId: generatedAsset.id,
         layoutAssetId: layoutAsset?.id ?? null,
-        warningMessage,
+        warningMessage: dimensionWarning,
         providerDebug: {
           ...(generated.providerDebug ?? {}),
           requestedWidth: item.width,
@@ -491,6 +500,29 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
           actualHeight: generatedAsset.height ?? undefined,
         },
       });
+
+      let syncWarning: string | null = null;
+      try {
+        const details = getJobDetails(jobId);
+        const feishuState = details
+          ? await syncJobToFeishu({
+              settings,
+              details,
+              latestGeneratedAsset: generatedAsset,
+              latestAssetBuffer: generated.buffer,
+            })
+          : null;
+
+        if (feishuState) {
+          updateJobFeishuSyncState(jobId, feishuState.recordId, feishuState.fileTokens);
+        }
+      } catch (syncError) {
+        syncWarning = `Feishu sync failed: ${syncError instanceof Error ? syncError.message : "Unknown error."}`;
+      }
+
+      const warningMessage = [dimensionWarning, syncWarning].filter(Boolean).join(" | ") || null;
+      updateJobItemWarning(item.id, warningMessage);
+
       successCount += 1;
     } catch (error) {
       failureCount += 1;
@@ -516,18 +548,39 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
           : null,
         providerDebug,
       );
+
+      try {
+        await syncJobSummaryToFeishu(jobId, settings);
+      } catch {
+        // Swallow task-level sync errors on failed items so generation status remains authoritative.
+      }
     }
   }
 
   if (successCount > 0 && failureCount > 0) {
     updateJobStatus(jobId, "partial", summarizePartialFailure(items.length, successCount, failureDebugs));
+    try {
+      await syncJobSummaryToFeishu(jobId, settings);
+    } catch {
+      // Keep task completion flow resilient if Feishu summary sync fails.
+    }
     return;
   }
 
   if (successCount > 0) {
     updateJobStatus(jobId, "completed");
+    try {
+      await syncJobSummaryToFeishu(jobId, settings);
+    } catch {
+      // Keep task completion flow resilient if Feishu summary sync fails.
+    }
     return;
   }
 
   updateJobStatus(jobId, "failed", firstFailureMessage ?? "All variants failed to generate.");
+  try {
+    await syncJobSummaryToFeishu(jobId, settings);
+  } catch {
+    // Keep task completion flow resilient if Feishu summary sync fails.
+  }
 }

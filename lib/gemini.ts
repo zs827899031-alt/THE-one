@@ -26,6 +26,8 @@ const translationSchema = {
     sellingPoints: { type: "string" },
     restrictions: { type: "string" },
     sourceDescription: { type: "string" },
+    materialInfo: { type: "string" },
+    sizeInfo: { type: "string" },
   },
 } as const;
 
@@ -268,6 +270,51 @@ export function normalizeProviderError(error: unknown): string {
   return raw;
 }
 
+function normalizePromptText(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizePromptCategory(category?: string | null) {
+  const trimmed = normalizePromptText(category);
+  if (!trimmed || trimmed === "general") {
+    return null;
+  }
+
+  return trimmed;
+}
+
+function buildPromptFactLine(facts: Array<[label: string, value?: string | null]>) {
+  const parts = facts.flatMap(([label, value]) => {
+    const normalized = normalizePromptText(value);
+    return normalized ? [`${label}: ${normalized}`] : [];
+  });
+
+  return parts.length ? `${parts.join(". ")}.` : null;
+}
+
+function buildSimplifiedChineseOnlyLine(language: string) {
+  return language.toLowerCase().startsWith("zh")
+    ? "If any Chinese text appears anywhere in the output, use Simplified Chinese only. Do not use Traditional Chinese."
+    : null;
+}
+
+function buildRestrictionsLine(restrictions?: string | null) {
+  return buildPromptFactLine([["Restrictions", restrictions]]);
+}
+
+function buildReferenceZoneLine(
+  label: string,
+  zone?: { present?: boolean; sourceText?: string | null },
+) {
+  if (!zone?.present) {
+    return `${label} present: false.`;
+  }
+
+  const sourceTextLine = buildPromptFactLine([[`${label} source text`, zone.sourceText]]);
+  return [ `${label} present: true.`, sourceTextLine].filter(Boolean).join(" ");
+}
+
 export async function testProviderConnection(input: {
   apiKey: string;
   textModel: string;
@@ -300,28 +347,38 @@ export async function translateCreativeInputs(input: {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
 }): Promise<LocalizedCreativeInputs | null> {
   const hasProductName = Boolean(input.productName.trim());
   const hasSellingPoints = Boolean(input.sellingPoints.trim());
   const hasRestrictions = Boolean(input.restrictions.trim());
   const hasSourceDescription = Boolean(input.sourceDescription.trim());
+  const hasMaterialInfo = Boolean(input.materialInfo?.trim());
+  const hasSizeInfo = Boolean(input.sizeInfo?.trim());
 
-  if (!hasProductName && !hasSellingPoints && !hasRestrictions && !hasSourceDescription) {
+  if (!hasProductName && !hasSellingPoints && !hasRestrictions && !hasSourceDescription && !hasMaterialInfo && !hasSizeInfo) {
     return null;
   }
 
   const lines = [
     "You are a localization specialist for e-commerce creative production.",
     `Translate the following user-provided product fields into the target output language ${input.language} for market ${input.country}.`,
-    `Target platform: ${input.platform}. Product category: ${input.category}.`,
+    buildSimplifiedChineseOnlyLine(input.language),
+    [
+      `Target platform: ${input.platform}`,
+      normalizePromptCategory(input.category) ? `Product category: ${normalizePromptCategory(input.category)}` : null,
+    ]
+      .filter(Boolean)
+      .join(". ") + ".",
     "Rules:",
     "- Keep brand names, SKU, model numbers, measurements, units, and proper nouns unchanged unless a natural localized format is clearly better.",
     "- Preserve meaning faithfully and keep the result concise, natural, and suitable for prompt generation and marketing copy.",
     "- If a field is already appropriate for the target language, keep it with only light normalization.",
     "- Do not add any new claims or unsupported details.",
     "- Only return keys for fields that were actually provided with non-empty content.",
-    `Brand name reference: ${input.brandName || "Not provided"}.`,
-    `SKU reference: ${input.sku || "Not provided"}.`,
+    buildPromptFactLine([["Brand name reference", input.brandName]]),
+    buildPromptFactLine([["SKU reference", input.sku]]),
   ];
 
   if (hasProductName) {
@@ -336,13 +393,19 @@ export async function translateCreativeInputs(input: {
   if (hasSourceDescription) {
     lines.push(`Additional notes: ${input.sourceDescription}`);
   }
+  if (hasMaterialInfo) {
+    lines.push(`Material information: ${input.materialInfo?.trim()}`);
+  }
+  if (hasSizeInfo) {
+    lines.push(`Size and weight information: ${input.sizeInfo?.trim()}`);
+  }
 
   lines.push("Return JSON only.");
 
   const ai = createClient(input);
   const response = await ai.models.generateContent({
     model: input.textModel,
-    contents: lines.join("\n"),
+    contents: lines.filter(Boolean).join("\n"),
     config: {
       responseMimeType: "application/json",
       responseJsonSchema: translationSchema,
@@ -355,6 +418,8 @@ export async function translateCreativeInputs(input: {
     sellingPoints?: string;
     restrictions?: string;
     sourceDescription?: string;
+    materialInfo?: string;
+    sizeInfo?: string;
   };
 
   return {
@@ -362,6 +427,8 @@ export async function translateCreativeInputs(input: {
     sellingPoints: hasSellingPoints ? parsed.sellingPoints?.trim() || input.sellingPoints : "",
     restrictions: hasRestrictions ? parsed.restrictions?.trim() || input.restrictions : "",
     sourceDescription: hasSourceDescription ? parsed.sourceDescription?.trim() || input.sourceDescription : "",
+    materialInfo: hasMaterialInfo ? parsed.materialInfo?.trim() || input.materialInfo?.trim() || "" : "",
+    sizeInfo: hasSizeInfo ? parsed.sizeInfo?.trim() || input.sizeInfo?.trim() || "" : "",
   };
 }
 
@@ -380,6 +447,8 @@ export async function generateCopyBundle(input: {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
   brandProfile?: BrandRecord | null;
   imageType: ImageType;
   ratio: string;
@@ -426,6 +495,8 @@ export async function optimizeUserImagePrompt(input: {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
   imageType: ImageType;
   ratio: string;
   resolutionLabel: string;
@@ -433,16 +504,26 @@ export async function optimizeUserImagePrompt(input: {
   customNegativePrompt?: string;
 }): Promise<string> {
   const ai = createClient(input);
+  const category = normalizePromptCategory(input.category);
   const lines = [
     "You are an e-commerce image prompt optimizer.",
     `Rewrite the user's image prompt into one strong plain-text prompt for ${input.platform} in ${input.language} for market ${input.country}.`,
+    buildSimplifiedChineseOnlyLine(input.language),
     "Return plain text only. Do not return JSON, markdown, bullet lists, or explanations.",
-    "Keep the user's main creative intent, but make it more image-model friendly, concise, and commercially usable.",
+    "Keep the user's main creative intent, but make it more image-model friendly, concise, commercially usable, and strongly oriented toward realistic photography.",
+    "Optimization goal: produce a prompt that is more likely to generate a believable real photo rather than an illustration, CGI render, or stylized poster.",
+    "Prioritize natural lighting, realistic shadows, credible camera perspective, physically plausible materials, true-to-life texture, accurate scale, and premium commercial product photography quality.",
+    "Prefer wording that suggests a real photographed scene, realistic lens behavior, authentic reflections, and grounded background detail.",
+    "Avoid pushing the output toward illustration, cartoon styling, obvious 3D rendering, plastic-looking surfaces, surreal props, or fake-looking text overlays unless the user explicitly asked for that.",
     "Always preserve the uploaded product identity, shape, material, label placement, and key visual truth.",
-    `Product name: ${input.productName}. Brand: ${input.brandName || "Not specified"}. Category: ${input.category}.`,
-    `Selling points: ${input.sellingPoints || "Not provided"}.`,
-    `Additional notes: ${input.sourceDescription || "Not provided"}.`,
-    `Restrictions: ${input.restrictions || "No unsupported logos, pricing, or medical claims."}.`,
+    buildPromptFactLine([
+      ["Product name", input.productName],
+      ["Brand", input.brandName],
+      ["Category", category],
+    ]),
+    buildPromptFactLine([["Selling points", input.sellingPoints]]),
+    buildPromptFactLine([["Additional notes", input.sourceDescription]]),
+    buildRestrictionsLine(input.restrictions),
     `Preferred image type: ${input.imageType}.`,
     `Target aspect ratio: ${input.ratio}. Resolution bucket: ${input.resolutionLabel}.`,
     `User prompt: ${input.customPrompt}`,
@@ -451,7 +532,7 @@ export async function optimizeUserImagePrompt(input: {
 
   const response = await ai.models.generateContent({
     model: input.textModel,
-    contents: lines.join("\n"),
+    contents: lines.filter(Boolean).join("\n"),
     config: {
       temperature: 0.35,
     },
@@ -485,6 +566,7 @@ export async function translateUserPromptInputs(input: {
   const lines = [
     "You are a localization specialist for image-generation prompts.",
     `Translate the user's prompt content into the target output language ${input.language} for market ${input.country} and platform ${input.platform}.`,
+    buildSimplifiedChineseOnlyLine(input.language),
     "Rules:",
     "- Return JSON only.",
     "- Preserve the user's visual intent faithfully.",
@@ -565,6 +647,9 @@ export async function analyzeReferenceLayout(input: {
         text: [
           "You are analyzing an e-commerce poster reference image for a poster remake workflow.",
           `Return descriptions in ${uiLanguageName(input.uiLanguage)}.`,
+          input.uiLanguage === "zh"
+            ? "If any Chinese text appears in the analysis, use Simplified Chinese only. Do not use Traditional Chinese."
+            : null,
           "Identify the poster structure precisely instead of summarizing it loosely.",
           "Focus on layout and composition, not only product category.",
           "Extract whether the poster contains: top banner, main headline, subheadline, bottom banner, callout badges, packaging/secondary product, background scene, props, and main product placement.",
@@ -626,22 +711,40 @@ export async function generateRemakePosterCopy(input: {
 }): Promise<ReferencePosterCopy> {
   const ai = createClient(input);
   const calloutCount = input.referenceLayout.callouts.length;
+  const category = normalizePromptCategory(input.category);
   const response = await ai.models.generateContent({
     model: input.textModel,
     contents: [
       "You are rewriting copy for an e-commerce poster remake.",
-      `Output language: ${input.language}. Market: ${input.country}. Platform: ${input.platform}. Category: ${input.category}.`,
+      [
+        `Output language: ${input.language}`,
+        `Market: ${input.country}`,
+        `Platform: ${input.platform}`,
+        category ? `Category: ${category}` : null,
+      ]
+        .filter(Boolean)
+        .join(". ") + ".",
+      buildSimplifiedChineseOnlyLine(input.language),
       "You must preserve the reference poster's text hierarchy and slot count instead of inventing a new ad structure.",
       `Reference poster summary: ${input.referenceLayout.summary}.`,
-      `Top banner present: ${input.referenceLayout.topBanner.present}. Source text: ${input.referenceLayout.topBanner.sourceText || "N/A"}.`,
-      `Headline present: ${input.referenceLayout.headline.present}. Source text: ${input.referenceLayout.headline.sourceText || "N/A"}.`,
-      `Subheadline present: ${input.referenceLayout.subheadline.present}. Source text: ${input.referenceLayout.subheadline.sourceText || "N/A"}.`,
-      `Bottom banner present: ${input.referenceLayout.bottomBanner.present}. Source text: ${input.referenceLayout.bottomBanner.sourceText || "N/A"}.`,
-      `Callout count to preserve: ${calloutCount}. Existing callout texts: ${input.referenceLayout.callouts.map((item) => item.sourceText || "N/A").join(" | ") || "none"}.`,
-      `Product name: ${input.productName}. Brand: ${input.brandName || "Not specified"}.`,
-      `Selling points: ${input.sellingPoints || "Not provided"}.`,
-      `Additional notes: ${input.sourceDescription || "Not provided"}.`,
-      `Restrictions: ${input.restrictions || "No unsupported claims."}.`,
+      buildReferenceZoneLine("Top banner", input.referenceLayout.topBanner),
+      buildReferenceZoneLine("Headline", input.referenceLayout.headline),
+      buildReferenceZoneLine("Subheadline", input.referenceLayout.subheadline),
+      buildReferenceZoneLine("Bottom banner", input.referenceLayout.bottomBanner),
+      `Callout count to preserve: ${calloutCount}.`,
+      input.referenceLayout.callouts.some((item) => item.sourceText?.trim())
+        ? `Existing callout texts: ${input.referenceLayout.callouts
+            .map((item) => item.sourceText?.trim())
+            .filter(Boolean)
+            .join(" | ")}.`
+        : null,
+      buildPromptFactLine([
+        ["Product name", input.productName],
+        ["Brand", input.brandName],
+      ]),
+      buildPromptFactLine([["Selling points", input.sellingPoints]]),
+      buildPromptFactLine([["Additional notes", input.sourceDescription]]),
+      buildRestrictionsLine(input.restrictions),
       "Rules:",
       "- Keep copy concise and suited for a poster, not for a product description page.",
       "- Preserve the number of visible slots from the reference poster whenever possible.",
@@ -649,7 +752,9 @@ export async function generateRemakePosterCopy(input: {
       "- If there are no callout badges, return an empty array.",
       "- Do not invent pricing, medical claims, certifications, or unsupported slogans.",
       "Return JSON only.",
-    ].join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n"),
     config: {
       responseMimeType: "application/json",
       responseJsonSchema: referencePosterCopySchema,
@@ -678,7 +783,7 @@ export async function generateEditedImage(input: {
   apiBaseUrl?: string;
   apiVersion?: string;
   apiHeaders?: string;
-  creationMode?: "standard" | "reference-remix" | "prompt";
+  creationMode?: "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
   referenceStrength?: "reference" | "balanced" | "product";
   preserveReferenceText?: boolean;
   customPromptText?: string;
@@ -695,6 +800,8 @@ export async function generateEditedImage(input: {
   sellingPoints: string;
   restrictions: string;
   sourceDescription: string;
+  materialInfo?: string;
+  sizeInfo?: string;
   brandProfile?: BrandRecord | null;
   imageType: ImageType;
   ratio: string;
@@ -711,7 +818,7 @@ export async function generateEditedImage(input: {
   };
 
   if (input.imageModel.startsWith("gemini-3")) {
-    imageConfig.imageSize = input.resolutionLabel;
+    imageConfig.imageSize = input.resolutionLabel === "512px" ? "0.5K" : input.resolutionLabel;
   }
 
   const promptText =
