@@ -1458,6 +1458,12 @@ tbody tr:hover {
   justify-content: flex-start;
 }
 
+.history-stats-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .history-stat-pill {
   display: inline-flex;
   align-items: center;
@@ -1481,6 +1487,13 @@ tbody tr:hover {
   border-color: rgba(239, 68, 68, 0.3);
   background: rgba(239, 68, 68, 0.12);
   color: #fecaca;
+}
+
+.history-duration-note {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 .history-status-badge,

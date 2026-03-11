@@ -11,6 +11,7 @@ coverage
 output
 release
 tmp
+doc/进展记录.md
 *.sqlite
 *.db
 *.tsbuildinfo

@@ -75,6 +75,42 @@ function formatDateTime(language: UiLanguage, value: string) {
   };
 }
 
+function formatJobDuration(language: UiLanguage, createdAt: string, completedAt: string | null) {
+  if (!completedAt) {
+    return null;
+  }
+
+  const start = new Date(createdAt).getTime();
+  const end = new Date(completedAt).getTime();
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return null;
+  }
+
+  const totalSeconds = Math.max(1, Math.round((end - start) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (language === "zh") {
+    if (hours > 0) {
+      return `耗时 ${hours}小时${minutes}分${seconds}秒`;
+    }
+    if (minutes > 0) {
+      return `耗时 ${minutes}分${seconds}秒`;
+    }
+    return `耗时 ${seconds}秒`;
+  }
+
+  if (hours > 0) {
+    return `Time ${hours}h ${minutes}m ${seconds}s`;
+  }
+  if (minutes > 0) {
+    return `Time ${minutes}m ${seconds}s`;
+  }
+  return `Time ${seconds}s`;
+}
+
 function assetPreviewUrl(assetId: string) {
   return `/api/assets/${assetId}`;
 }
@@ -135,6 +171,8 @@ export function JobTable({ jobs, language }: { jobs: JobRecord[]; language: UiLa
           {jobs.map((job) => {
             const createdAt = formatDateTime(language, job.createdAt);
             const overflowCount = Math.max(0, job.previewImageCount - 8);
+            const durationLabel =
+              job.status === "completed" ? formatJobDuration(language, job.createdAt, job.completedAt) : null;
 
             return (
               <tr key={job.id}>
@@ -183,16 +221,19 @@ export function JobTable({ jobs, language }: { jobs: JobRecord[]; language: UiLa
                   {job.country} / {job.language}
                 </td>
                 <td>
-                  <div className="history-stat-pill-group">
-                    <span className="history-stat-pill">
-                      {metricLabel(language, "generated")} {job.generatedCount}
-                    </span>
-                    <span className="history-stat-pill is-success">
-                      {metricLabel(language, "succeeded")} {job.succeededCount}
-                    </span>
-                    <span className="history-stat-pill is-failure">
-                      {metricLabel(language, "failed")} {job.failedCount}
-                    </span>
+                  <div className="history-stats-cell">
+                    <div className="history-stat-pill-group">
+                      <span className="history-stat-pill">
+                        {metricLabel(language, "generated")} {job.generatedCount}
+                      </span>
+                      <span className="history-stat-pill is-success">
+                        {metricLabel(language, "succeeded")} {job.succeededCount}
+                      </span>
+                      <span className="history-stat-pill is-failure">
+                        {metricLabel(language, "failed")} {job.failedCount}
+                      </span>
+                    </div>
+                    {durationLabel ? <div className="history-duration-note">{durationLabel}</div> : null}
                   </div>
                 </td>
                 <td>

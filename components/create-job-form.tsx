@@ -146,6 +146,8 @@ function copyFor(language: UiLanguage) {
         autoLanguageHint: "开启后，切换国家时会自动带出该市场默认语言。",
         outputLanguage: "输出语言",
         outputLanguageHint: "生成前会自动把文案翻译成当前输出语言；提示词模式下会翻译你填写的提示词和负向提示词。",
+        promptMarketToggle: "自定义目标市场参数（可选）",
+        promptMarketToggleHint: "默认沿用当前提示词模式的市场与语言参数；只有在你需要指定国家、语言或平台时再展开。",
         platform: "平台",
         brandLibraryHint: "可直接输入品牌名，也可从品牌库中选择。",
         imageTypes: "图片类型",
@@ -265,6 +267,8 @@ function copyFor(language: UiLanguage) {
         autoLanguageHint: "When enabled, changing country will automatically switch to that market's default language.",
         outputLanguage: "Output language",
         outputLanguageHint: "Before generation, copy is auto-translated into the current output language. In prompt mode, your prompt and negative prompt are translated as well.",
+        promptMarketToggle: "Customize target market settings (optional)",
+        promptMarketToggleHint: "Prompt mode uses the current default market and language settings unless you explicitly expand and override them.",
         platform: "Platform",
         brandLibraryHint: "Type a brand freely or pick one from the brand library.",
         imageTypes: "Image types",
@@ -368,6 +372,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [recommendationMessage, setRecommendationMessage] = useState("");
   const [autoLanguageByCountry, setAutoLanguageByCountry] = useState(true);
+  const [promptMarketOverridesEnabled, setPromptMarketOverridesEnabled] = useState(false);
   const [brands, setBrands] = useState<BrandRecord[]>([]);
   const [openSections, setOpenSections] = useState(INITIAL_OPEN_SECTIONS);
   const [payload, setPayload] = useState(INITIAL_PAYLOAD);
@@ -390,9 +395,10 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     const resolutionsChanged = JSON.stringify(selectedResolutions) !== JSON.stringify(INITIAL_SELECTED_RESOLUTIONS);
     const hasTemplateOverride = Object.keys(selectedTemplateOverrides).length > 0;
     const hasImages = files.length > 0 || referenceFiles.length > 0;
+    const promptMarketChanged = promptMarketOverridesEnabled;
 
-    return payloadChanged || typesChanged || ratiosChanged || resolutionsChanged || hasTemplateOverride || hasImages;
-  }, [files.length, payload, referenceFiles.length, selectedRatios, selectedResolutions, selectedTemplateOverrides, selectedTypes]);
+    return payloadChanged || typesChanged || ratiosChanged || resolutionsChanged || hasTemplateOverride || hasImages || promptMarketChanged;
+  }, [files.length, payload, promptMarketOverridesEnabled, referenceFiles.length, selectedRatios, selectedResolutions, selectedTemplateOverrides, selectedTypes]);
   const shouldWarnBeforeLeave = hasDraftChanges && !submittedJobId;
 
   useEffect(() => {
@@ -410,6 +416,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
         selectedResolutions?: string[];
         selectedTemplateOverrides?: Record<string, string>;
         autoLanguageByCountry?: boolean;
+        promptMarketOverridesEnabled?: boolean;
         openSections?: typeof INITIAL_OPEN_SECTIONS;
         recommendationMessage?: string;
       };
@@ -431,6 +438,9 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
       }
       if (typeof draft.autoLanguageByCountry === "boolean") {
         setAutoLanguageByCountry(draft.autoLanguageByCountry);
+      }
+      if (typeof draft.promptMarketOverridesEnabled === "boolean") {
+        setPromptMarketOverridesEnabled(draft.promptMarketOverridesEnabled);
       }
       if (draft.openSections) {
         setOpenSections((current) => ({ ...current, ...draft.openSections }));
@@ -501,12 +511,14 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
         selectedResolutions,
         selectedTemplateOverrides,
         autoLanguageByCountry,
+        promptMarketOverridesEnabled,
         openSections,
         recommendationMessage,
       }),
     );
   }, [
     autoLanguageByCountry,
+    promptMarketOverridesEnabled,
     draftReady,
     openSections,
     payload,
@@ -937,6 +949,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     setRecommendationMessage("");
     setErrorMessage("");
     setAutoLanguageByCountry(true);
+    setPromptMarketOverridesEnabled(false);
     setOpenSections(INITIAL_OPEN_SECTIONS);
     setPayload(INITIAL_PAYLOAD);
     window.localStorage.removeItem(CREATE_JOB_DRAFT_KEY);
@@ -1829,92 +1842,96 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
             <div className="accordion-body">
               {payload.creationMode !== "reference-remix" ? (
                 <>
-                  <label>
-                    <span>{text.country}</span>
-                    <select
-                      value={payload.country}
-                      onChange={(event) => {
-                        const country = event.target.value;
-                        const nextLanguage = getDefaultLanguageForCountry(country);
-                        setPayload({
-                          ...payload,
-                          country,
-                          language:
-                            payload.creationMode === "prompt" || autoLanguageByCountry
-                              ? nextLanguage ?? payload.language
-                              : payload.language,
-                        });
-                      }}
-                    >
-                      {COUNTRIES.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label[language]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {payload.creationMode === "standard" ? (
+                  {payload.creationMode !== "prompt" ? (
                     <>
-                      <label className="checkbox-row helper-toggle-row">
-                        <input
-                          checked={autoLanguageByCountry}
-                          type="checkbox"
+                      <label>
+                        <span>{text.country}</span>
+                        <select
+                          value={payload.country}
                           onChange={(event) => {
-                            const checked = event.target.checked;
-                            setAutoLanguageByCountry(checked);
-                            if (checked) {
-                              const nextLanguage = getDefaultLanguageForCountry(payload.country);
-                              if (nextLanguage) {
-                                setPayload((current) => ({
-                                  ...current,
-                                  language: nextLanguage,
-                                }));
-                              }
-                            }
+                            const country = event.target.value;
+                            const nextLanguage = getDefaultLanguageForCountry(country);
+                            setPayload({
+                              ...payload,
+                              country,
+                              language:
+                                payload.creationMode === "standard" && autoLanguageByCountry
+                                  ? nextLanguage ?? payload.language
+                                  : payload.language,
+                            });
                           }}
-                        />
-                        <span>{text.autoLanguageToggle}</span>
+                        >
+                          {COUNTRIES.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label[language]}
+                            </option>
+                          ))}
+                        </select>
                       </label>
-                      <p className="helper inline-helper">{text.autoLanguageHint}</p>
+                      {payload.creationMode === "standard" ? (
+                        <>
+                          <label className="checkbox-row helper-toggle-row">
+                            <input
+                              checked={autoLanguageByCountry}
+                              type="checkbox"
+                              onChange={(event) => {
+                                const checked = event.target.checked;
+                                setAutoLanguageByCountry(checked);
+                                if (checked) {
+                                  const nextLanguage = getDefaultLanguageForCountry(payload.country);
+                                  if (nextLanguage) {
+                                    setPayload((current) => ({
+                                      ...current,
+                                      language: nextLanguage,
+                                    }));
+                                  }
+                                }
+                              }}
+                            />
+                            <span>{text.autoLanguageToggle}</span>
+                          </label>
+                          <p className="helper inline-helper">{text.autoLanguageHint}</p>
+                        </>
+                      ) : null}
+                      <label>
+                        <span>{text.outputLanguage}</span>
+                        <select
+                          value={payload.language}
+                          onChange={(event) =>
+                            setPayload((current) => ({
+                              ...current,
+                              language: event.target.value,
+                              country:
+                                current.creationMode === "prompt"
+                                  ? getDefaultCountryForLanguage(event.target.value) ?? current.country
+                                  : current.country,
+                            }))
+                          }
+                        >
+                          {OUTPUT_LANGUAGES.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label[language]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <p className="helper inline-helper">{text.outputLanguageHint}</p>
+                      {payload.creationMode === "amazon-a-plus" ? (
+                        <p className="helper inline-helper">{amazonAPlusLockedPlatformHint}</p>
+                      ) : (
+                        <label>
+                          <span>{text.platform}</span>
+                          <select value={payload.platform} onChange={(event) => setPayload({ ...payload, platform: event.target.value })}>
+                            {PLATFORMS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label[language]}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                     </>
                   ) : null}
-                  <label>
-                    <span>{text.outputLanguage}</span>
-                    <select
-                      value={payload.language}
-                      onChange={(event) =>
-                        setPayload((current) => ({
-                          ...current,
-                          language: event.target.value,
-                          country:
-                            current.creationMode === "prompt"
-                              ? getDefaultCountryForLanguage(event.target.value) ?? current.country
-                              : current.country,
-                        }))
-                      }
-                    >
-                      {OUTPUT_LANGUAGES.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label[language]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="helper inline-helper">{text.outputLanguageHint}</p>
-                  {payload.creationMode === "amazon-a-plus" ? (
-                    <p className="helper inline-helper">{amazonAPlusLockedPlatformHint}</p>
-                  ) : (
-                    <label>
-                      <span>{text.platform}</span>
-                      <select value={payload.platform} onChange={(event) => setPayload({ ...payload, platform: event.target.value })}>
-                        {PLATFORMS.map((option) => (
-                          <option key={option.value} value={option.value}>
-                            {option.label[language]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
 
                   <h2>{text.generation}</h2>
                   <div className="split-header compact generator-header-row">
@@ -2004,6 +2021,72 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   <input checked={payload.includeCopyLayout} type="checkbox" onChange={(event) => setPayload({ ...payload, includeCopyLayout: event.target.checked })} />
                   <span>{text.includeLayout}</span>
                 </label>
+              ) : null}
+              {payload.creationMode === "prompt" ? (
+                <>
+                  <label className="checkbox-row helper-toggle-row">
+                    <input
+                      checked={promptMarketOverridesEnabled}
+                      type="checkbox"
+                      onChange={(event) => setPromptMarketOverridesEnabled(event.target.checked)}
+                    />
+                    <span>{text.promptMarketToggle}</span>
+                  </label>
+                  <p className="helper inline-helper">{text.promptMarketToggleHint}</p>
+                  {promptMarketOverridesEnabled ? (
+                    <div className="stack gap-16">
+                      <label>
+                        <span>{text.country}</span>
+                        <select
+                          value={payload.country}
+                          onChange={(event) => {
+                            const country = event.target.value;
+                            setPayload((current) => ({
+                              ...current,
+                              country,
+                            }));
+                          }}
+                        >
+                          {COUNTRIES.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label[language]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>{text.outputLanguage}</span>
+                        <select
+                          value={payload.language}
+                          onChange={(event) =>
+                            setPayload((current) => ({
+                              ...current,
+                              language: event.target.value,
+                              country: getDefaultCountryForLanguage(event.target.value) ?? current.country,
+                            }))
+                          }
+                        >
+                          {OUTPUT_LANGUAGES.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label[language]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <p className="helper inline-helper">{text.outputLanguageHint}</p>
+                      <label>
+                        <span>{text.platform}</span>
+                        <select value={payload.platform} onChange={(event) => setPayload({ ...payload, platform: event.target.value })}>
+                          {PLATFORMS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label[language]}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
+                </>
               ) : null}
             </div>
           ) : null}

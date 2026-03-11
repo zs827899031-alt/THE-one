@@ -645,7 +645,6 @@ export function buildReferenceDirectRemakePrompt(input: {
   referencePosterCopyHints?: ReferencePosterCopy | null;
   promptVariant?: "strict" | "fallback";
 }) {
-  const isFallback = input.promptVariant === "fallback";
   const strengthLines = strengthPrompt(input.referenceStrength);
   const extraPrompt = input.referenceExtraPrompt?.trim();
   const negativePrompt = input.referenceNegativePrompt?.trim();
@@ -678,10 +677,10 @@ export function buildReferenceDirectRemakePrompt(input: {
     `Remake the second input image as a poster in ${input.language} for market ${input.country}.`,
     buildSimplifiedChineseOnlyLine(input.language),
     "The first image is the real product source. The second image is the exact visual reference poster.",
-    "Keep the second image's composition, camera angle, background type, color blocking, packaging relationship, decorative elements, banner bars, text positions, and overall poster feeling as close as possible.",
+    "Keep the second image's overall composition, camera angle, background type, major text zones, packaging relationship, and poster feeling close to the reference.",
     "Replace only the reference product with the product from the first image.",
     "Use the first image for product truth only: shape, cap, label placement, material, transparency, reflections, proportions, and recognizable identity.",
-    "Do not redesign the poster into a generic lifestyle ad. Keep it looking like the reference poster.",
+    "Keep it as a poster remake. Do not redesign it into a generic lifestyle ad.",
     ...strengthLines,
     ...buildBrandOverrideLines(input.brandProfile),
     `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} fidelity.`,
@@ -694,18 +693,14 @@ export function buildReferenceDirectRemakePrompt(input: {
     buildPromptFactLine([["Selling points for product understanding only", input.sellingPoints]]),
     buildPromptFactLine([["Additional notes", input.sourceDescription]]),
     input.preserveReferenceText
-      ? "Preserve the reference poster's original visible text content as much as possible. Keep the same text quantity, text hierarchy, font feeling, stroke feeling, banner text style, and approximate line breaks whenever possible."
-      : "Text may be adapted, but keep the same number of major text blocks, similar text hierarchy, and the same banner/title layout as the reference.",
+      ? "If the reference contains readable text, keep the same main message structure and similar text placement whenever possible."
+      : "Text can be adapted, but keep the same number of main text blocks and the same banner/title layout.",
     ...hintLines,
     extraPrompt ? `Extra remake guidance: ${extraPrompt}` : null,
     buildRestrictionsLine(input.restrictions),
     negativePrompt ? `Extra avoid instructions: ${negativePrompt}` : null,
-    isFallback
-      ? "Fallback mode: if exact lettering is difficult, preserve the same text block shapes, colors, and placement first. Prefer approximate readable lettering over changing the poster structure."
-      : "Strict mode: preserve the reference poster structure first, including the top bar, bottom bar, main title region, packaging placement, and overall visual hierarchy.",
-    isFallback
-      ? "Avoid removing banner bars, removing packaging, changing the scene to a generic studio setup, or dropping the poster-like composition."
-      : "Avoid generic white-background styling, generic kitchen scenes, duplicated products, distorted packaging, wrong labels, or missing banner blocks.",
+    "Prefer preserving the poster structure, packaging relationship, and title/banner hierarchy over exact lettering.",
+    "Avoid generic white-background restyling, duplicated products, distorted packaging, wrong labels, or missing banner blocks.",
   ]
     .filter(Boolean)
     .join("\n");

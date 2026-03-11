@@ -11,7 +11,7 @@ import {
 } from "@/lib/gemini";
 import { splitCompositeSourceDescription } from "@/lib/creative-fields";
 import { syncJobToFeishu } from "@/lib/feishu";
-import { buildProviderDimensionWarning } from "@/lib/image-size-policy";
+import { buildProviderDimensionWarning, meetsRequestedResolutionBucket } from "@/lib/image-size-policy";
 import { createPosterSvg } from "@/lib/poster";
 import {
   getAssetById,
@@ -35,6 +35,7 @@ import {
 import { readAssetBuffer, writeFileAsset } from "@/lib/storage";
 import type { AssetRecord, ProviderDebugInfo, ProviderOverride } from "@/lib/types";
 import { buildPromptModeCopyBundle } from "@/lib/templates";
+import { detectImageDimensions, isGeminiImageSizeBucket } from "@/lib/utils";
 
 function ratioDelta(actualWidth: number, actualHeight: number, requestedRatio: string) {
   const [requestedWidth, requestedHeight] = requestedRatio.split(":").map(Number);
@@ -108,6 +109,29 @@ async function syncJobSummaryToFeishu(jobId: string, settings = getSettings()) {
   if (feishuState) {
     updateJobFeishuSyncState(jobId, feishuState.recordId, feishuState.fileTokens);
   }
+}
+
+function shouldRetryForResolutionBucket(imageModel: string, resolutionLabel: string) {
+  return imageModel.startsWith("gemini-3") && isGeminiImageSizeBucket(resolutionLabel);
+}
+
+function withProviderDebugContext(error: unknown, fallbackMessage: string) {
+  const message = error instanceof Error ? error.message : fallbackMessage;
+  const wrapped = new Error(message) as Error & {
+    promptText?: string;
+    providerDebug?: ProviderDebugInfo | null;
+  };
+
+  if (error && typeof error === "object") {
+    if ("promptText" in error) {
+      wrapped.promptText = String((error as { promptText?: string }).promptText ?? "");
+    }
+    if ("providerDebug" in error) {
+      wrapped.providerDebug = (error as { providerDebug?: ProviderDebugInfo | null }).providerDebug ?? null;
+    }
+  }
+
+  return wrapped;
 }
 
 export async function processJob(jobId: string, providerOverride?: ProviderOverride) {
@@ -398,44 +422,45 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         sourceImages: [...sourceImages, ...referenceImages],
       };
 
-      let generated;
-      if (job.creationMode === "reference-remix") {
-        try {
-          generated = await generateEditedImage({
-            ...imageInput,
-            remakePromptVariant: "strict",
-          });
-        } catch (strictError) {
-          const strictMessage = normalizeProviderError(strictError);
-          const strictPromptText =
-            strictError && typeof strictError === "object" && "promptText" in strictError
-              ? String((strictError as { promptText?: string }).promptText ?? "")
-              : "";
-          try {
-            generated = await generateEditedImage({
-              ...imageInput,
-              remakePromptVariant: "fallback",
-            });
-          } catch (fallbackError) {
-            const fallbackMessage = normalizeProviderError(fallbackError);
-            const fallbackPromptText =
-              fallbackError && typeof fallbackError === "object" && "promptText" in fallbackError
-                ? String((fallbackError as { promptText?: string }).promptText ?? "")
-                : "";
-            const combinedError = new Error(
-              `Strict remake failed: ${strictMessage}. Fallback remake failed: ${fallbackMessage}.`,
-            ) as Error & { promptText?: string };
-            combinedError.promptText = [
-              strictPromptText ? `=== Strict remake prompt ===\n${strictPromptText}` : "",
-              fallbackPromptText ? `=== Fallback remake prompt ===\n${fallbackPromptText}` : "",
-            ]
-              .filter(Boolean)
-              .join("\n\n");
-            throw combinedError;
-          }
+      const generateOneImage = async () => {
+        if (job.creationMode === "reference-remix") {
+          return generateEditedImage(imageInput);
         }
-      } else {
-        generated = await generateEditedImage(imageInput);
+
+        return generateEditedImage(imageInput);
+      };
+
+      const maxGenerationAttempts = shouldRetryForResolutionBucket(settings.defaultImageModel, item.resolutionLabel) ? 3 : 1;
+      let generated: Awaited<ReturnType<typeof generateEditedImage>> | null = null;
+      let actualDimensions: ReturnType<typeof detectImageDimensions> = null;
+
+      for (let attempt = 1; attempt <= maxGenerationAttempts; attempt += 1) {
+        generated = await generateOneImage();
+        actualDimensions = detectImageDimensions(generated.buffer, generated.mimeType);
+
+        if (
+          !generated ||
+          meetsRequestedResolutionBucket({
+            requestedResolutionLabel: item.resolutionLabel,
+            actualWidth: actualDimensions?.width ?? null,
+            actualHeight: actualDimensions?.height ?? null,
+          })
+        ) {
+          break;
+        }
+
+        if (attempt === maxGenerationAttempts) {
+          const undersizedError = withProviderDebugContext(
+            generated,
+            `Provider returned a lower-than-requested image size for ${item.resolutionLabel}.`,
+          );
+          undersizedError.message = `Provider returned ${actualDimensions?.width ?? "unknown"}×${actualDimensions?.height ?? "unknown"} for requested ${item.resolutionLabel} bucket after ${maxGenerationAttempts} attempts. The current model or relay is not honoring the requested size bucket.`;
+          throw undersizedError;
+        }
+      }
+
+      if (!generated) {
+        throw new Error("Image generation failed without returning any image data.");
       }
 
       const generatedAsset = await writeFileAsset({
@@ -454,6 +479,7 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         requestedResolutionLabel: item.resolutionLabel,
         actualWidth: generatedAsset.width,
         actualHeight: generatedAsset.height,
+        language: job.uiLanguage,
       });
 
       let layoutAsset: AssetRecord | null = null;
