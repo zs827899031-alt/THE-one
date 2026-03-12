@@ -6,10 +6,10 @@
 面向电商运营、设计与商品团队的本地化 AI 生图工作台。  
 A local-network friendly AI image generation workstation for ecommerce operators, designers, and merchandising teams.
 
-**Version:** `v0.3.0`  
-**Latest Windows Installer:** `IMAGE-STUDIO-WINDOWS-0.3.0.exe`
+**Version:** `v0.4.0`  
+**Latest Windows Installer:** `IMAGE-STUDIO-WINDOWS-0.4.0.exe`
 
-[Releases](https://github.com/zs827899031-alt/gemini-commerce-image-workbench/releases) · [中文操作说明](./Readme/使用说明-电商AI出图工作台.md) · [PRD](./Readme/PRD-电商AI出图工作台.md) · [Source Code](https://github.com/zs827899031-alt/gemini-commerce-image-workbench)
+[Releases](https://github.com/aEboli/gemini-commerce-image-workbench/releases) · [中文操作说明](./Readme/使用说明-电商AI出图工作台.md) · [PRD](./Readme/PRD-电商AI出图工作台.md) · [Source Code](https://github.com/aEboli/gemini-commerce-image-workbench)
 
 </div>
 
@@ -30,25 +30,25 @@ Commerce Image Studio is a production-oriented workstation for batch product ima
 | 审核结果并只导出“通过”的素材 | Review outputs and export only approved assets |
 | 自动把生成结果同步到飞书多维表格 | Automatically sync generated outputs into Feishu Bitable |
 
-## 版本亮点 / What’s New in v0.3.0
+## 版本亮点 / What’s New in v0.4.0
 
 | 新功能 | 说明 |
 | --- | --- |
-| 三种创作模式 | 支持标准出图、提示词模式、参考图复刻 |
-| 飞书多维表格同步 | 支持连接测试、字段映射、自动建记录、4K 图片同步 |
-| 模板中心升级 | 支持默认模板、自定义模板、复制模板、模板匹配 |
-| 品牌库 | 支持品牌档案、品牌色、提示词约束 |
-| 结果审核流 | 支持入选、通过、淘汰与通过项打包下载 |
-| 安全发布 | 安装器按版本命名，发布包自动清理密钥、任务记录与素材目录 |
+| 五种创作模式 | 覆盖标准出图、提示词模式、参考图复刻、套图模式与亚马逊 A+ 图 |
+| 审核工作台升级 | 历史缩略图、灯箱切换、详情聚焦与通过项导出体验更完整 |
+| 模板与品牌协作 | 模板中心、品牌库、市场规则和提示词链路更适合团队复用 |
+| 飞书同步增强 | 字段映射、连通测试、写回链路与结果结构更稳定 |
+| 创建与设置页重构 | 参数胶囊、说明卡、设置页概览和最近任务区统一为新主题样式 |
+| 安全发布口径 | 版本化安装器命名，发布时可清理密钥、任务记录与素材目录 |
 
-### v0.3.0 in English
+### v0.4.0 in English
 
-- Three creation modes: standard generation, prompt mode, and reference remix
-- Feishu Bitable sync with connection testing, field mapping, automatic record creation, and 4K image upload
-- Template center with default templates, custom variants, duplication, and matching
-- Brand library for consistent brand-driven output
-- Review workflow with shortlist, approve, reject, and approved-only export
-- Safe release packaging with versioned installers and sanitized release data
+- Five creation modes: standard, prompt, reference remake, image-set, and Amazon A+ workflows
+- Stronger review workspace with history thumbnails, lightbox navigation, detail focus, and approved-only export
+- Better template and brand collaboration for reusable market-aware production
+- More stable Feishu sync with field mapping, connectivity checks, and structured write-back
+- Refined studio and settings UI with aligned chips, cards, and overview panels
+- Safe release packaging with versioned installers and optional secret sanitization
 
 ## 产品亮点 / Product Highlights
 
@@ -122,8 +122,8 @@ The template center supports filtering, duplicating, editing, and extending temp
 
 ### 任务详情 / Job Details
 
-任务详情页集中显示 prompt、文案、纯图、文案排版图、错误、警告和审核状态，是结果筛选与导出的主界面。  
-The job-details page centralizes prompts, copy, pure images, layout creatives, warnings, errors, and review states for final selection and export.
+任务详情页集中显示 prompt、文案、纯图、错误、警告和审核状态，是结果筛选与导出的主界面。  
+The job-details page centralizes prompts, copy, pure images, warnings, errors, and review states for final selection and export.
 
 ![Job Details](docs/screenshots/job-details.png)
 
@@ -142,8 +142,8 @@ The settings page centralizes Gemini official API config, relay config, Feishu B
    Choose a creation mode and upload source or reference images in Studio.
 3. 填写商品、市场、语言、平台和规格参数。  
    Fill in product, market, language, platform, and output parameters.
-4. 提交批量任务，等待系统生成图片、文案与排版图。  
-   Submit the batch job and let the system generate images, copy, and layout creatives.
+4. 提交批量任务，等待系统生成图片与文案。  
+   Submit the batch job and let the system generate images and copy.
 5. 在任务详情页审核结果，执行入选、通过或淘汰。  
    Review outputs in Job Details and mark them as shortlisted, approved, or rejected.
 6. 导出通过项，或将成功结果自动同步到飞书多维表格。  
@@ -153,10 +153,10 @@ The settings page centralizes Gemini official API config, relay config, Feishu B
 
 ### Windows 安装器 / Windows Installer
 
-- 推荐从 [GitHub Releases](https://github.com/zs827899031-alt/gemini-commerce-image-workbench/releases) 下载  
-  Recommended download source: [GitHub Releases](https://github.com/zs827899031-alt/gemini-commerce-image-workbench/releases)
-- 当前安装器命名为 `IMAGE-STUDIO-WINDOWS-0.3.0.exe`  
-  The current installer is named `IMAGE-STUDIO-WINDOWS-0.3.0.exe`
+- 推荐从 [GitHub Releases](https://github.com/aEboli/gemini-commerce-image-workbench/releases) 下载  
+  Recommended download source: [GitHub Releases](https://github.com/aEboli/gemini-commerce-image-workbench/releases)
+- 当前安装器命名为 `IMAGE-STUDIO-WINDOWS-0.4.0.exe`  
+  The current installer is named `IMAGE-STUDIO-WINDOWS-0.4.0.exe`
 - 安装器内置运行时，不需要额外安装 Node.js  
   The installer bundles its own runtime, so Node.js is not required on the target machine
 

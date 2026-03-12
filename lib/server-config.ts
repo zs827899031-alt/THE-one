@@ -6,9 +6,15 @@ import type { AppSettings } from "@/lib/types";
 
 export { APP_NAME };
 
-export const DEFAULT_DATA_DIR = path.join(process.cwd(), "data");
-export const DEFAULT_STORAGE_DIR = path.join(DEFAULT_DATA_DIR, "assets");
-export const DEFAULT_DATABASE_PATH = path.join(DEFAULT_DATA_DIR, "commerce-image-studio.sqlite");
+const configuredDataDir = process.env.COMMERCE_STUDIO_DATA_DIR;
+const configuredStorageDir = process.env.COMMERCE_STUDIO_STORAGE_DIR;
+const configuredDatabasePath = process.env.COMMERCE_STUDIO_DB_PATH;
+
+export const DEFAULT_DATA_DIR = path.resolve(configuredDataDir ?? path.join(process.cwd(), "data"));
+export const DEFAULT_STORAGE_DIR = path.resolve(configuredStorageDir ?? path.join(DEFAULT_DATA_DIR, "assets"));
+export const DEFAULT_DATABASE_PATH = path.resolve(
+  configuredDatabasePath ?? path.join(DEFAULT_DATA_DIR, "commerce-image-studio.sqlite"),
+);
 export const DEFAULT_FEISHU_FIELD_MAPPING = getRecommendedFeishuFieldMappingJson();
 
 export const DEFAULT_SETTINGS: AppSettings = {

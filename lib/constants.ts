@@ -91,7 +91,7 @@ export const IMAGE_TYPE_OPTIONS: Array<SelectOption & { value: ImageType }> = [
   {
     value: "main-image",
     label: { zh: "主图", en: "Main image" },
-    description: { zh: "整套图中的主视觉商品主图", en: "Primary hero image for a product image set" },
+    description: { zh: "整套图中的主视觉图片主图", en: "Primary hero image for a product image set" },
   },
   {
     value: "lifestyle",
@@ -101,7 +101,7 @@ export const IMAGE_TYPE_OPTIONS: Array<SelectOption & { value: ImageType }> = [
   {
     value: "scene",
     label: { zh: "场景图", en: "Lifestyle scene" },
-    description: { zh: "把商品放进真实使用场景", en: "Place the product in a realistic lifestyle scene" },
+    description: { zh: "把图片主体放进真实使用场景", en: "Place the product in a realistic lifestyle scene" },
   },
   {
     value: "white-background",

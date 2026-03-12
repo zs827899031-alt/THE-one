@@ -55,10 +55,10 @@ export default async function HomePage() {
       ? {
           featureTitle: "团队创作面板",
           featureCards: [
-            { title: "批量出图", description: "一次上传多张商品图，按类型、尺寸和数量自动拆分任务。" },
+            { title: "批量出图", description: "一次上传多张图片，按类型、尺寸和数量自动拆分任务。" },
             { title: "多市场适配", description: "按国家、语言和平台自动命中文案与视觉模板。" },
             { title: "模板驱动", description: "默认模板和自定义模板都能参与实时命中与生成。" },
-            { title: "快速复用", description: "从历史任务继续生成，持续迭代商品视觉资产。" },
+            { title: "快速复用", description: "从历史任务继续生成，持续迭代图片视觉资产。" },
           ],
           quickActionsTitle: "快捷入口",
           quickActions: [
@@ -70,7 +70,7 @@ export default async function HomePage() {
           workflowTitle: "推荐工作流",
           workflowSteps: [
             "先确认 API Key、Base URL 和默认模型。",
-            "在创作台上传商品图并确认模板命中。",
+            "在创作台上传图片并确认模板命中。",
             "回到历史页筛选、审核和下载结果。",
           ],
           helperTitle: "当前站点能力",
@@ -105,8 +105,8 @@ export default async function HomePage() {
 
   return (
     <div className="stack gap-24 overview-page">
-      <section className="hero panel overview-hero overview-hero-compact">
-        <div className="overview-hero-main overview-hero-main-compact">
+      <section className="hero panel page-hero overview-hero overview-hero-compact">
+        <div className="page-hero-copy overview-hero-main overview-hero-main-compact">
           <p className="eyebrow">AI Commerce Studio</p>
           <h2>{t(language, "heroTitle")}</h2>
           <p>{t(language, "heroSubtitle")}</p>
@@ -127,7 +127,7 @@ export default async function HomePage() {
           </ol>
         </div>
 
-        <div className="overview-hero-side overview-hero-side-compact">
+        <div className="page-hero-meta overview-hero-side overview-hero-side-compact">
           <div className="split-header compact">
             <div>
               <p className="eyebrow">{copy.featureTitle}</p>
@@ -137,10 +137,10 @@ export default async function HomePage() {
           <p className="helper">{copy.helperBody}</p>
 
           <div className="stats-grid overview-compact-stats">
-            <StatCard label={t(language, "statsJobs")} value={stats.jobs.toString()} accent="#3b82f6" />
-            <StatCard label={t(language, "statsAssets")} value={stats.assets.toString()} accent="#8b5cf6" />
-            <StatCard label={t(language, "statsTemplates")} value={stats.templates.toString()} accent="#06b6d4" />
-            <StatCard label={t(language, "statsMarkets")} value={stats.markets.toString()} accent="#10b981" />
+            <StatCard label={t(language, "statsJobs")} value={stats.jobs.toString()} accent="#69b9ff" />
+            <StatCard label={t(language, "statsAssets")} value={stats.assets.toString()} accent="#ff6d84" />
+            <StatCard label={t(language, "statsTemplates")} value={stats.templates.toString()} accent="#63dad2" />
+            <StatCard label={t(language, "statsMarkets")} value={stats.markets.toString()} accent="#56d7a7" />
           </div>
 
           <div className="quick-link-grid overview-compact-actions">

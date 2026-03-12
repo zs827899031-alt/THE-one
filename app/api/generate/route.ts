@@ -21,7 +21,10 @@ export async function POST(request: Request) {
   const formData = await request.formData();
   const payloadRaw = formData.get("payload");
   const files = formData.getAll("files").filter((file): file is File => file instanceof File);
-  const referenceFiles = formData.getAll("referenceFiles").filter((file): file is File => file instanceof File);
+  const referenceFiles = formData
+    .getAll("referenceFiles")
+    .filter((file): file is File => file instanceof File)
+    .slice(0, 1);
 
   if (!payloadRaw || typeof payloadRaw !== "string") {
     return NextResponse.json({ error: "Missing payload." }, { status: 400 });
@@ -31,6 +34,8 @@ export async function POST(request: Request) {
   if (!isPayload(payload)) {
     return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
   }
+  const normalizedReferenceCopyMode: CreatePayload["referenceCopyMode"] =
+    payload.referenceCopyMode === "copy-sheet" ? "copy-sheet" : "reference";
 
   const effectivePayload =
     payload.creationMode === "reference-remix"
@@ -40,10 +45,17 @@ export async function POST(request: Request) {
           language: payload.uiLanguage === "zh" ? "zh-CN" : payload.language || "en-US",
           platform: payload.uiLanguage === "zh" ? "tmall" : payload.platform || "amazon",
           selectedTypes: ["scene"],
-          selectedResolutions: payload.selectedResolutions?.length ? payload.selectedResolutions : ["4K"],
+          selectedRatios: payload.selectedRatios?.length ? [payload.selectedRatios[0]] : ["1:1"],
+          selectedResolutions: payload.selectedResolutions?.length ? [payload.selectedResolutions[0]] : ["4K"],
           selectedTemplateOverrides: {},
           includeCopyLayout: false,
-          preserveReferenceText: payload.preserveReferenceText ?? true,
+          referenceStrength: "reference" as const,
+          preserveReferenceText: true,
+          referenceCopyMode: normalizedReferenceCopyMode,
+          referenceExtraPrompt: "",
+          referenceNegativePrompt: "",
+          referenceLayoutOverride: null,
+          referencePosterCopyOverride: null,
         }
       : payload.creationMode === "suite"
         ? {

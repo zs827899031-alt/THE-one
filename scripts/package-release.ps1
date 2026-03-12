@@ -152,6 +152,7 @@ $launcher = @(
   'set HOSTNAME=0.0.0.0',
   'if "%PORT%"=="" set PORT=3000',
   'if not exist ".\data" mkdir ".\data"',
+  'set "COMMERCE_STUDIO_DATA_DIR=%~dp0data"',
   'set "NODE_EXE=%~dp0runtime\node.exe"',
   'if not exist "%NODE_EXE%" set "NODE_EXE=node"',
   '"%NODE_EXE%" server.js',

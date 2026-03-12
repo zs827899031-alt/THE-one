@@ -50,11 +50,19 @@ export interface JobListFilters {
   dateTo?: string;
 }
 
+export interface JobListSummary {
+  totalJobs: number;
+  totalGenerated: number;
+  totalSucceeded: number;
+  totalFailed: number;
+}
+
 export interface CreateJobInput {
   id: string;
   creationMode: JobRecord["creationMode"];
   referenceStrength: JobRecord["referenceStrength"];
   preserveReferenceText: boolean;
+  referenceCopyMode: JobRecord["referenceCopyMode"];
   productName: string;
   sku: string;
   category: string;
@@ -63,6 +71,7 @@ export interface CreateJobInput {
   restrictions: string;
   customPrompt: string;
   customNegativePrompt: string;
+  translatePromptToOutputLanguage: boolean;
   autoOptimizePrompt: boolean;
   referenceExtraPrompt: string;
   referenceNegativePrompt: string;
@@ -92,6 +101,7 @@ function rowToJob(row: any): JobRecord {
     creationMode: row.creation_mode ?? "standard",
     referenceStrength: row.reference_strength ?? "balanced",
     preserveReferenceText: Boolean(row.preserve_reference_text ?? 1),
+    referenceCopyMode: row.reference_copy_mode ?? "reference",
     generatedCount: Number(row.generated_count ?? 0),
     succeededCount: Number(row.succeeded_count ?? 0),
     failedCount: Number(row.failed_count ?? 0),
@@ -103,6 +113,7 @@ function rowToJob(row: any): JobRecord {
     restrictions: row.restrictions,
     customPrompt: row.custom_prompt ?? "",
     customNegativePrompt: row.custom_negative_prompt ?? "",
+    translatePromptToOutputLanguage: Boolean(row.translate_prompt_to_output_language ?? 0),
     autoOptimizePrompt: Boolean(row.auto_optimize_prompt ?? 0),
     referenceExtraPrompt: row.reference_extra_prompt ?? "",
     referenceNegativePrompt: row.reference_negative_prompt ?? "",
@@ -145,7 +156,7 @@ const JOB_LIST_SELECT = `
     SELECT
       job_id,
       COUNT(*) AS generated_count,
-      SUM(CASE WHEN generated_asset_id IS NOT NULL OR layout_asset_id IS NOT NULL THEN 1 ELSE 0 END) AS succeeded_count,
+      SUM(CASE WHEN generated_asset_id IS NOT NULL THEN 1 ELSE 0 END) AS succeeded_count,
       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
     FROM job_items
     GROUP BY job_id
@@ -207,6 +218,53 @@ function rowToJobPreviewAsset(row: any): JobPreviewAsset {
     originalName: row.original_name,
     width: row.width ?? null,
     height: row.height ?? null,
+  };
+}
+
+function buildJobListWhere(filters: JobListFilters = {}) {
+  const clauses: string[] = [];
+  const values: Array<string> = [];
+
+  if (filters.search) {
+    clauses.push("(product_name LIKE ? OR sku LIKE ?)");
+    values.push(`%${filters.search}%`, `%${filters.search}%`);
+  }
+  if (filters.status) {
+    clauses.push("status = ?");
+    values.push(filters.status);
+  }
+  if (filters.platform) {
+    clauses.push("platform = ?");
+    values.push(filters.platform);
+  }
+  if (filters.country) {
+    clauses.push("country = ?");
+    values.push(filters.country);
+  }
+  if (filters.language) {
+    clauses.push("language = ?");
+    values.push(filters.language);
+  }
+  if (filters.imageType) {
+    clauses.push("selected_types LIKE ?");
+    values.push(`%${filters.imageType}%`);
+  }
+  if (filters.resolution) {
+    clauses.push("selected_resolutions LIKE ?");
+    values.push(`%${filters.resolution}%`);
+  }
+  if (filters.dateFrom) {
+    clauses.push("created_at >= ?");
+    values.push(filters.dateFrom);
+  }
+  if (filters.dateTo) {
+    clauses.push("created_at <= ?");
+    values.push(filters.dateTo);
+  }
+
+  return {
+    where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
+    values,
   };
 }
 
@@ -429,8 +487,16 @@ function ensureJobColumns(database: DatabaseSync) {
       statement: "ALTER TABLE jobs ADD COLUMN preserve_reference_text INTEGER NOT NULL DEFAULT 1",
     },
     {
+      name: "reference_copy_mode",
+      statement: "ALTER TABLE jobs ADD COLUMN reference_copy_mode TEXT NOT NULL DEFAULT 'reference'",
+    },
+    {
       name: "custom_prompt",
       statement: "ALTER TABLE jobs ADD COLUMN custom_prompt TEXT NOT NULL DEFAULT ''",
+    },
+    {
+      name: "translate_prompt_to_output_language",
+      statement: "ALTER TABLE jobs ADD COLUMN translate_prompt_to_output_language INTEGER NOT NULL DEFAULT 1",
     },
     {
       name: "auto_optimize_prompt",
@@ -521,6 +587,7 @@ function ensureSchema(database: DatabaseSync) {
       creation_mode TEXT NOT NULL DEFAULT 'standard',
       reference_strength TEXT NOT NULL DEFAULT 'balanced',
       preserve_reference_text INTEGER NOT NULL DEFAULT 1,
+      reference_copy_mode TEXT NOT NULL DEFAULT 'reference',
       product_name TEXT NOT NULL,
       sku TEXT NOT NULL,
       category TEXT NOT NULL,
@@ -529,6 +596,7 @@ function ensureSchema(database: DatabaseSync) {
       restrictions TEXT NOT NULL,
       custom_prompt TEXT NOT NULL DEFAULT '',
       custom_negative_prompt TEXT NOT NULL DEFAULT '',
+      translate_prompt_to_output_language INTEGER NOT NULL DEFAULT 1,
       auto_optimize_prompt INTEGER NOT NULL DEFAULT 0,
       reference_extra_prompt TEXT NOT NULL DEFAULT '',
       reference_negative_prompt TEXT NOT NULL DEFAULT '',
@@ -812,7 +880,7 @@ export function updateSettings(input: Partial<AppSettings>): AppSettings {
 export function getDashboardStats(): DashboardStats {
   const database = getDb();
   const jobs = database.prepare("SELECT COUNT(*) as count FROM jobs").get() as { count: number };
-  const assets = database.prepare("SELECT COUNT(*) as count FROM assets WHERE kind != 'source'").get() as { count: number };
+  const assets = database.prepare("SELECT COUNT(*) as count FROM assets WHERE kind = 'generated'").get() as { count: number };
   const templates = database.prepare("SELECT COUNT(*) as count FROM templates").get() as { count: number };
   return {
     jobs: jobs.count,
@@ -1045,17 +1113,18 @@ export function createJob(input: CreateJobInput): JobRecord {
     database
       .prepare(
         `INSERT INTO jobs (
-          id, status, creation_mode, reference_strength, preserve_reference_text, product_name, sku, category, brand_name, selling_points, restrictions, custom_prompt, custom_negative_prompt, auto_optimize_prompt, reference_extra_prompt, reference_negative_prompt, country, language, platform,
+          id, status, creation_mode, reference_strength, preserve_reference_text, reference_copy_mode, product_name, sku, category, brand_name, selling_points, restrictions, custom_prompt, custom_negative_prompt, translate_prompt_to_output_language, auto_optimize_prompt, reference_extra_prompt, reference_negative_prompt, country, language, platform,
           selected_types, selected_ratios, selected_resolutions, variants_per_type, include_copy_layout,
           batch_file_count, created_at, updated_at, source_description, ui_language, selected_template_overrides,
           reference_layout_override_json, reference_poster_copy_override_json
-        ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         input.id,
         input.creationMode,
         input.referenceStrength,
         input.preserveReferenceText ? 1 : 0,
+        input.referenceCopyMode,
         input.productName,
         input.sku,
         input.category,
@@ -1064,6 +1133,7 @@ export function createJob(input: CreateJobInput): JobRecord {
         input.restrictions,
         input.customPrompt,
         input.customNegativePrompt,
+        input.translatePromptToOutputLanguage ? 1 : 0,
         input.autoOptimizePrompt ? 1 : 0,
         input.referenceExtraPrompt,
         input.referenceNegativePrompt,
@@ -1196,56 +1266,120 @@ export function getJobItemById(itemId: string): JobItemRecord | null {
   return row ? rowToItem(row) : null;
 }
 
-export function listJobs(filters: JobListFilters = {}): JobRecord[] {
+export function listJobs(filters: JobListFilters = {}, options: { limit?: number; offset?: number } = {}): JobRecord[] {
   const database = getDb();
-  const clauses: string[] = [];
-  const values: Array<string> = [];
+  const { where, values } = buildJobListWhere(filters);
+  const limit = Math.max(1, Math.min(options.limit ?? 200, 200));
+  const offset = Math.max(0, options.offset ?? 0);
+  const statement = database.prepare(`${JOB_LIST_SELECT} ${where} ORDER BY jobs.created_at DESC LIMIT ? OFFSET ?`);
+  return attachJobPreviewAssets((statement.all(...values, limit, offset) as any[]).map(rowToJob));
+}
 
-  if (filters.search) {
-    clauses.push("(product_name LIKE ? OR sku LIKE ?)");
-    values.push(`%${filters.search}%`, `%${filters.search}%`);
-  }
-  if (filters.status) {
-    clauses.push("status = ?");
-    values.push(filters.status);
-  }
-  if (filters.platform) {
-    clauses.push("platform = ?");
-    values.push(filters.platform);
-  }
-  if (filters.country) {
-    clauses.push("country = ?");
-    values.push(filters.country);
-  }
-  if (filters.language) {
-    clauses.push("language = ?");
-    values.push(filters.language);
-  }
-  if (filters.imageType) {
-    clauses.push("selected_types LIKE ?");
-    values.push(`%${filters.imageType}%`);
-  }
-  if (filters.resolution) {
-    clauses.push("selected_resolutions LIKE ?");
-    values.push(`%${filters.resolution}%`);
-  }
-  if (filters.dateFrom) {
-    clauses.push("created_at >= ?");
-    values.push(filters.dateFrom);
-  }
-  if (filters.dateTo) {
-    clauses.push("created_at <= ?");
-    values.push(filters.dateTo);
-  }
+export function summarizeJobs(filters: JobListFilters = {}): JobListSummary {
+  const database = getDb();
+  const { where, values } = buildJobListWhere(filters);
+  const row = database
+    .prepare(
+      `SELECT
+         COUNT(*) AS total_jobs,
+         COALESCE(SUM(COALESCE(job_stats.generated_count, 0)), 0) AS total_generated,
+         COALESCE(SUM(COALESCE(job_stats.succeeded_count, 0)), 0) AS total_succeeded,
+         COALESCE(SUM(COALESCE(job_stats.failed_count, 0)), 0) AS total_failed
+       FROM jobs
+       LEFT JOIN (
+         SELECT
+           job_id,
+           COUNT(*) AS generated_count,
+           SUM(CASE WHEN generated_asset_id IS NOT NULL THEN 1 ELSE 0 END) AS succeeded_count,
+           SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+         FROM job_items
+         GROUP BY job_id
+       ) AS job_stats
+         ON job_stats.job_id = jobs.id
+       ${where}`,
+    )
+    .get(...values) as
+    | {
+        total_jobs: number;
+        total_generated: number;
+        total_succeeded: number;
+        total_failed: number;
+      }
+    | undefined;
 
-  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const statement = database.prepare(`${JOB_LIST_SELECT} ${where} ORDER BY jobs.created_at DESC LIMIT 200`);
-  return attachJobPreviewAssets((statement.all(...values) as any[]).map(rowToJob));
+  return {
+    totalJobs: Number(row?.total_jobs ?? 0),
+    totalGenerated: Number(row?.total_generated ?? 0),
+    totalSucceeded: Number(row?.total_succeeded ?? 0),
+    totalFailed: Number(row?.total_failed ?? 0),
+  };
 }
 
 export function listRecentJobs(limit = 6): JobRecord[] {
   const database = getDb();
   return (database.prepare(`${JOB_LIST_SELECT} ORDER BY jobs.created_at DESC LIMIT ?`).all(limit) as any[]).map(rowToJob);
+}
+
+export function listRecoverableJobIds(): string[] {
+  const database = getDb();
+  const rows = database
+    .prepare(
+      `SELECT DISTINCT jobs.id
+       FROM jobs
+       LEFT JOIN job_items ON job_items.job_id = jobs.id
+       WHERE jobs.status IN ('queued', 'processing')
+          OR job_items.status IN ('queued', 'processing')
+       ORDER BY jobs.created_at ASC`,
+    )
+    .all() as Array<{ id: string }>;
+
+  return rows.map((row) => row.id);
+}
+
+export function resetJobItemsToQueued(jobId: string) {
+  const database = getDb();
+  database
+    .prepare("UPDATE job_items SET status = 'queued', updated_at = ? WHERE job_id = ? AND status = 'processing'")
+    .run(nowIso(), jobId);
+}
+
+export function markJobQueued(jobId: string) {
+  const database = getDb();
+  database
+    .prepare("UPDATE jobs SET status = 'queued', error_message = NULL, updated_at = ?, completed_at = NULL WHERE id = ?")
+    .run(nowIso(), jobId);
+}
+
+export function getJobItemStatusSummary(jobId: string) {
+  const database = getDb();
+  const row = database
+    .prepare(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_count,
+         SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing_count,
+         SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+         SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+       FROM job_items
+       WHERE job_id = ?`,
+    )
+    .get(jobId) as
+    | {
+        total: number;
+        queued_count: number;
+        processing_count: number;
+        completed_count: number;
+        failed_count: number;
+      }
+    | undefined;
+
+  return {
+    total: Number(row?.total ?? 0),
+    queuedCount: Number(row?.queued_count ?? 0),
+    processingCount: Number(row?.processing_count ?? 0),
+    completedCount: Number(row?.completed_count ?? 0),
+    failedCount: Number(row?.failed_count ?? 0),
+  };
 }
 
 export function getAssetById(assetId: string): AssetRecord | null {
@@ -1291,7 +1425,7 @@ export function updateJobFeishuSyncState(jobId: string, recordId: string | null,
 
 export function updateJobItemProcessing(itemId: string) {
   const database = getDb();
-  database.prepare("UPDATE job_items SET status = 'processing', updated_at = ? WHERE id = ?").run(nowIso(), itemId);
+  database.prepare("UPDATE job_items SET status = 'processing', updated_at = ? WHERE id = ? AND status = 'queued'").run(nowIso(), itemId);
 }
 
 export function updateJobItemResult(input: {

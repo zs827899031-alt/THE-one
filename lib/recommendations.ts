@@ -5,7 +5,6 @@ export interface RecommendedCreateDefaults {
   selectedRatios: string[];
   selectedResolutions: string[];
   variantsPerType: number;
-  includeCopyLayout: boolean;
   reason: Record<UiLanguage, string>;
 }
 
@@ -19,7 +18,6 @@ export function getRecommendedCreateDefaults(input: { platform: string; category
     selectedRatios: ["1:1", "4:5"],
     selectedResolutions: ["1K", "2K"],
     variantsPerType: 2,
-    includeCopyLayout: true,
     reason: {
       zh: "已按当前平台和品类推荐更常用的出图组合。",
       en: "Applied a recommended setup for the current platform and category.",

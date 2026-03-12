@@ -40,7 +40,7 @@ export function BrandLibraryManager({
       language === "zh"
         ? {
             eyebrow: "品牌库",
-            title: "品牌库 v1",
+            title: "品牌库",
             description: "为常用品牌维护固定语气、品牌色、禁用词和提示词偏好，创作台填写品牌名后会自动带入这些规则。",
             listTitle: "品牌列表",
             empty: "还没有品牌配置，先创建第一个品牌档案。",
@@ -67,7 +67,7 @@ export function BrandLibraryManager({
           }
         : {
             eyebrow: "Brand library",
-            title: "Brand library v1",
+            title: "Brand library",
             description:
               "Maintain reusable brand tone, color, banned terms, and prompt guidance. When the same brand name is used in Create, these rules are applied automatically.",
             listTitle: "Brands",

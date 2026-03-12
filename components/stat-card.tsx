@@ -4,10 +4,10 @@ export function StatCard({ label, value, accent }: { label: string; value: strin
   return (
     <article className="stat-card" style={accent ? ({ "--stat-accent": accent } as CSSProperties) : undefined}>
       <div className="stat-card-head">
-        <span>{label}</span>
+        <span className="stat-card-label">{label}</span>
         <i aria-hidden className="stat-card-dot" />
       </div>
-      <strong>{value}</strong>
+      <strong className="stat-card-value">{value}</strong>
     </article>
   );
 }

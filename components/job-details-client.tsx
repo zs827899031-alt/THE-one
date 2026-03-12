@@ -3,24 +3,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { ImageLightbox, type ImageLightboxItem } from "@/components/image-lightbox";
+import { buildAssetUrl } from "@/lib/asset-url";
 import { ASPECT_RATIOS, IMAGE_TYPE_OPTIONS } from "@/lib/constants";
 import { splitCompositeSourceDescription } from "@/lib/creative-fields";
 import { formatRequestedSizeDisplay } from "@/lib/image-size-policy";
 import type { JobDetails, JobItemReviewStatus, UiLanguage } from "@/lib/types";
 
-const CREATE_JOB_PROMPT_PREFILL_KEY = "commerce-image-studio.create-prompt-prefill.v1";
-type DetailTabId = "inputs" | "reference" | "variants";
+type DetailTabId = "inputs" | "variants";
+
+type DetailLightboxItem = ImageLightboxItem & {
+  actionHref: string;
+  itemId: string;
+};
+
+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
+  return (
+    <svg aria-hidden="true" fill="none" viewBox="0 0 20 20">
+      <path
+        d={direction === "left" ? "M11.75 4.5 6.25 10l5.5 5.5" : "M8.25 4.5 13.75 10l-5.5 5.5"}
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      />
+    </svg>
+  );
+}
 
 function getDefaultDetailTab(details: JobDetails): DetailTabId {
   if (details.job.localizedInputs) {
     return "inputs";
-  }
-
-  if (
-    details.job.creationMode === "reference-remix" &&
-    (details.job.referenceLayoutAnalysis || details.job.referencePosterCopy)
-  ) {
-    return "reference";
   }
 
   return "variants";
@@ -67,15 +80,41 @@ function reviewStatusText(language: UiLanguage, status: JobItemReviewStatus) {
 }
 
 function assetPreviewUrl(assetId: string) {
-  return `/api/assets/${assetId}`;
+  return buildAssetUrl(assetId, { width: 1400, quality: 82 });
+}
+
+function assetThumbUrl(assetId: string) {
+  return buildAssetUrl(assetId, { width: 320, quality: 72 });
+}
+
+function assetSidebarUrl(assetId: string) {
+  return buildAssetUrl(assetId, { width: 256, quality: 70 });
+}
+
+function assetCompareUrl(assetId: string) {
+  return buildAssetUrl(assetId, { width: 720, quality: 78 });
+}
+
+function assetGridUrl(assetId: string) {
+  return buildAssetUrl(assetId, { width: 960, quality: 80 });
+}
+
+function assetOriginalUrl(assetId: string) {
+  return buildAssetUrl(assetId);
 }
 
 function assetDownloadUrl(assetId: string) {
-  return `/api/assets/${assetId}?download=1`;
+  return buildAssetUrl(assetId, { download: true });
 }
 
 function approvedDownloadUrl(jobId: string) {
   return `/api/jobs/${jobId}/approved-download`;
+}
+
+function previewZoomAriaLabel(language: UiLanguage, label: string, index: number, total: number) {
+  return language === "zh"
+    ? `\u70b9\u51fb\u653e\u5927\u67e5\u770b ${label} \u7684\u7b2c ${index} / ${total} \u5f20\u56fe\u7247`
+    : `Open zoom preview ${index} of ${total} for ${label}`;
 }
 
 async function copyToClipboard(value: string) {
@@ -135,7 +174,11 @@ function formatSizeMb(sizeBytes: number | null | undefined, emptyLabel: string) 
   return `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function imageTypeLabel(language: UiLanguage, imageType: string) {
+function imageTypeLabel(language: UiLanguage, imageType: string, creationMode?: JobDetails["job"]["creationMode"]) {
+  if (creationMode === "reference-remix") {
+    return language === "zh" ? "复刻图" : "Remake image";
+  }
+
   return IMAGE_TYPE_OPTIONS.find((option) => option.value === imageType)?.label[language] ?? imageType;
 }
 
@@ -159,9 +202,10 @@ export function JobDetailsClient({
     () =>
       initialActiveItemId && initialDetails.items.some((item) => item.id === initialActiveItemId)
         ? initialActiveItemId
-        : initialDetails.items.find((item) => item.generatedAsset || item.layoutAsset)?.id ?? initialDetails.items[0]?.id ?? null,
+        : initialDetails.items.find((item) => item.generatedAsset)?.id ?? initialDetails.items[0]?.id ?? null,
   );
   const [isFeishuSyncing, setIsFeishuSyncing] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   useEffect(() => {
     if (!["queued", "processing"].includes(details.job.status)) {
@@ -194,7 +238,7 @@ export function JobDetailsClient({
 
   useEffect(() => {
     const fallbackActiveId =
-      details.items.find((item) => item.generatedAsset || item.layoutAsset)?.id ?? details.items[0]?.id ?? null;
+      details.items.find((item) => item.generatedAsset)?.id ?? details.items[0]?.id ?? null;
 
     if (!fallbackActiveId) {
       if (activeItemId) {
@@ -221,7 +265,7 @@ export function JobDetailsClient({
             "inputSnapshotHint": "\u540c\u4e00\u4e2a\u5b57\u6bb5\u540c\u65f6\u5bf9\u7167\u539f\u59cb\u8f93\u5165\u548c\u7cfb\u7edf\u751f\u6210\u524d\u5b9e\u9645\u4f7f\u7528\u7684\u7ffb\u8bd1\u540e\u7248\u672c\u3002",
             "originalInfo": "\u539f\u59cb\u8f93\u5165",
             "localizedInfo": "\u81ea\u52a8\u7ffb\u8bd1\u540e\u8f93\u5165",
-            "translatedProductName": "\u5546\u54c1\u540d",
+            "translatedProductName": "图片名",
             "translatedSellingPoints": "\u6838\u5fc3\u5356\u70b9",
             "translatedRestrictions": "\u9650\u5236\u8bcd / \u7981\u7528\u5185\u5bb9",
             "translatedSourceDescription": "\u8865\u5145\u8bf4\u660e",
@@ -229,32 +273,37 @@ export function JobDetailsClient({
             "translatedSizeInfo": "\u5c3a\u5bf8 / \u91cd\u91cf",
             "copy": "\u590d\u5236",
             "copied": "\u5df2\u590d\u5236",
-            "reusePrompt": "\u56de\u586b\u5230\u521b\u4f5c\u53f0\u9ad8\u7ea7\u63d0\u793a\u8bcd",
-            "sourceImages": "\u5546\u54c1\u539f\u56fe",
+            "sourceImages": "图片原图",
             "referenceImages": "\u53c2\u8003\u56fe",
             "creationMode": "\u751f\u6210\u6a21\u5f0f",
             "standardMode": "\u6807\u51c6\u51fa\u56fe",
             "promptMode": "\u63d0\u793a\u8bcd\u6a21\u5f0f",
+            "promptTranslation": "\u63d0\u793a\u8bcd\u7ffb\u8bd1",
+            "promptTranslationOn": "\u7ffb\u8bd1\u4e3a\u8f93\u51fa\u8bed\u8a00",
+            "promptTranslationOff": "\u4fdd\u7559\u539f\u6587",
+            "promptOptimization": "\u771f\u5b9e\u7167\u7247\u4f18\u5316",
+            "promptOptimizationOn": "\u5df2\u5f00\u542f",
+            "promptOptimizationOff": "\u672a\u5f00\u542f",
             "referenceMode": "\u53c2\u8003\u56fe\u590d\u523b",
+            "referenceCopyMode": "\u6587\u6848\u6765\u6e90",
+            "referenceCopyModeReference": "\u5b8c\u5168\u53c2\u7167\u539f\u56fe",
+            "referenceCopyModeCopySheet": "\u6309\u6587\u6848\u8868\u683c",
             "referenceStrength": "\u590d\u523b\u5f3a\u5ea6",
             "strengthReference": "\u66f4\u50cf\u53c2\u8003\u56fe",
             "strengthBalanced": "\u5e73\u8861",
-            "strengthProduct": "\u66f4\u50cf\u539f\u5546\u54c1\u573a\u666f",
+            "strengthProduct": "更像原图场景",
             "sourceAndReference": "\u539f\u56fe / \u53c2\u8003\u56fe",
             "mediaBoardHint": "\u5de6\u4fa7\u4fdd\u7559\u539f\u59cb\u8f93\u5165\u7d20\u6750\uff0c\u53f3\u4fa7\u4e3b\u5de5\u4f5c\u533a\u805a\u7126\u751f\u6210\u7ed3\u679c\uff0c\u51cf\u5c11\u4e0a\u4e0b\u6765\u56de\u6eda\u52a8\u3002",
             "previewWorkspace": "\u7ed3\u679c\u5de5\u4f5c\u53f0",
-            "previewWorkspaceHint": "\u9009\u4e2d\u4e00\u4e2a\u751f\u6210\u9879\u540e\uff0c\u53ef\u5728\u8fd9\u91cc\u540c\u65f6\u67e5\u770b\u751f\u6210\u56fe\u3001\u6587\u6848\u56fe\u3001\u4fe1\u606f\u548c\u5ba1\u6838\u64cd\u4f5c\u3002",
+            "previewWorkspaceHint": "\u9009\u4e2d\u4e00\u4e2a\u751f\u6210\u9879\u540e\uff0c\u5728\u8fd9\u91cc\u805a\u7126\u67e5\u770b\u751f\u6210\u56fe\uff0c\u5e76\u5b8c\u6210\u5c3a\u5bf8\u3001Prompt \u548c\u5ba1\u6838\u64cd\u4f5c\u3002",
+            "zoomHint": "\u70b9\u51fb\u56fe\u7247\u53ef\u653e\u5927\u67e5\u770b",
             "variantBrowser": "\u751f\u6210\u9879\u6d4f\u89c8",
             "variantBrowserHint": "\u5728\u8fd9\u91cc\u5148\u5207\u6362\u8981\u805a\u7126\u67e5\u770b\u7684\u751f\u6210\u7ed3\u679c\uff0c\u4e0b\u65b9\u5de5\u4f5c\u53f0\u4f1a\u540c\u6b65\u663e\u793a\u5b8c\u6574\u5185\u5bb9\u3002",
             "noGeneratedImage": "\u6682\u65e0\u751f\u6210\u7eaf\u56fe",
-            "noLayoutImage": "\u6682\u65e0\u751f\u6210\u6587\u6848\u56fe",
             "noMedia": "\u6682\u65e0\u56fe\u7247",
             "noPreviewAvailable": "\u5f53\u524d\u751f\u6210\u9879\u8fd8\u6ca1\u6709\u53ef\u9884\u89c8\u7684\u7ed3\u679c\u3002",
-            "referenceLayout": "\u53c2\u8003\u56fe\u5206\u6790\u6458\u8981",
-            "referencePosterCopy": "\u6d77\u62a5\u69fd\u4f4d\u6587\u6848",
             "variants": "\u53d8\u4f53\u7ed3\u679c",
             "generated": "\u7eaf\u56fe\u7247",
-            "layout": "\u6587\u6848\u56fe",
             "compare": "\u7ed3\u679c\u5bf9\u6bd4",
             "addCompare": "\u52a0\u5165\u5bf9\u6bd4",
             "removeCompare": "\u79fb\u51fa\u5bf9\u6bd4",
@@ -296,6 +345,7 @@ export function JobDetailsClient({
             "unknown": "\u672a\u77e5",
             "separator": " \u00b7 ",
             "variantSummary": "{total} \u4e2a\u751f\u6210\u9879\u4e2d {success} \u4e2a\u6210\u529f\uff0c{failed} \u4e2a\u5931\u8d25\u3002",
+            "providerRequestSummary": "{count} \u4e2a\u5931\u8d25\u9879\u53d1\u751f\u5728\u8bf7\u6c42\u4e2d\u8f6c / \u6a21\u578b\u63a5\u53e3\u9636\u6bb5\u3002",
             "providerDownloadSummary": "{count} \u4e2a\u5931\u8d25\u9879\u53d1\u751f\u5728\u4e0b\u8f7d\u4e2d\u8f6c\u8fd4\u56de\u56fe\u7247\u65f6\u3002",
             "warningSummary": "{count} \u4e2a\u6210\u529f\u9879\u7684\u5b9e\u9645\u5c3a\u5bf8\u4e0e\u8bf7\u6c42\u4e0d\u4e00\u81f4\u3002",
             "requestSize": "\u8bf7\u6c42\u5c3a\u5bf8\u6863\u4f4d",
@@ -307,7 +357,11 @@ export function JobDetailsClient({
             "providerImageUrl": "\u4e2d\u8f6c\u8fd4\u56de\u56fe\u7247 URL",
             "openLink": "\u6253\u5f00\u94fe\u63a5",
             "rawProviderResponse": "\u4e2d\u8f6c\u539f\u59cb\u8fd4\u56de",
-            "failureReason": "\u5931\u8d25\u8be6\u60c5"
+            "failureReason": "\u5931\u8d25\u8be6\u60c5",
+            "failureStage": "\u5931\u8d25\u9636\u6bb5",
+            "failureStageProviderRequest": "\u8bf7\u6c42\u4e2d\u8f6c / \u6a21\u578b\u63a5\u53e3",
+            "failureStageProviderDownload": "\u4e0b\u8f7d\u4e2d\u8f6c\u8fd4\u56de\u56fe\u7247",
+            "failureStageResponse": "\u6a21\u578b\u54cd\u5e94 / \u62d2\u7edd"
 }
         : {
             "heading": "Job details",
@@ -319,7 +373,7 @@ export function JobDetailsClient({
             "inputSnapshotHint": "Each field shows both your original input and the translated version the system actually used during generation.",
             "originalInfo": "Original input",
             "localizedInfo": "Auto-translated input",
-            "translatedProductName": "Product name",
+            "translatedProductName": "Image name",
             "translatedSellingPoints": "Selling points",
             "translatedRestrictions": "Restrictions / banned content",
             "translatedSourceDescription": "Additional notes",
@@ -327,32 +381,37 @@ export function JobDetailsClient({
             "translatedSizeInfo": "Size / weight",
             "copy": "Copy",
             "copied": "Copied",
-            "reusePrompt": "Reuse in create page advanced prompt",
             "sourceImages": "Source images",
             "referenceImages": "Reference images",
             "creationMode": "Creation mode",
             "standardMode": "Standard",
             "promptMode": "Prompt mode",
+            "promptTranslation": "Prompt translation",
+            "promptTranslationOn": "Translate to output language",
+            "promptTranslationOff": "Keep original wording",
+            "promptOptimization": "Real-photo optimization",
+            "promptOptimizationOn": "Enabled",
+            "promptOptimizationOff": "Disabled",
             "referenceMode": "Reference remake",
+            "referenceCopyMode": "Copy source",
+            "referenceCopyModeReference": "Follow reference text",
+            "referenceCopyModeCopySheet": "Use copy sheet",
             "referenceStrength": "Remake strength",
             "strengthReference": "Closer to reference",
             "strengthBalanced": "Balanced",
-            "strengthProduct": "Closer to product scene",
+            "strengthProduct": "Closer to source scene",
             "sourceAndReference": "Source / reference media",
             "mediaBoardHint": "Keep source inputs on the side while the main workspace stays focused on generated results, so you can review without constant scrolling.",
             "previewWorkspace": "Review workspace",
-            "previewWorkspaceHint": "Pick a variant and inspect the generated image, layout creative, metadata, and review actions in one place.",
+            "previewWorkspaceHint": "Pick a variant and focus on the generated image, metadata, prompt, and review actions in one place.",
+            "zoomHint": "Click the image to zoom in.",
             "variantBrowser": "Variant browser",
             "variantBrowserHint": "Pick the generated variant here first and keep the full workspace below in sync.",
             "noGeneratedImage": "No generated image yet",
-            "noLayoutImage": "No layout creative yet",
             "noMedia": "No images",
             "noPreviewAvailable": "This variant does not have any previewable output yet.",
-            "referenceLayout": "Reference layout analysis",
-            "referencePosterCopy": "Poster copy slots",
             "variants": "Variants",
             "generated": "Pure image",
-            "layout": "Layout creative",
             "compare": "Compare results",
             "addCompare": "Add to compare",
             "removeCompare": "Remove",
@@ -394,6 +453,7 @@ export function JobDetailsClient({
             "unknown": "Unknown",
             "separator": " \u00b7 ",
             "variantSummary": "{total} variants requested: {success} succeeded, {failed} failed.",
+            "providerRequestSummary": "{count} failed before the relay/model request returned a response.",
             "providerDownloadSummary": "{count} failed while downloading provider-returned image URLs.",
             "warningSummary": "{count} successful variants returned a different size than requested.",
             "requestSize": "Requested size bucket",
@@ -405,7 +465,11 @@ export function JobDetailsClient({
             "providerImageUrl": "Provider image URL",
             "openLink": "Open link",
             "rawProviderResponse": "Raw provider response",
-            "failureReason": "Failure details"
+            "failureReason": "Failure details",
+            "failureStage": "Failure stage",
+            "failureStageProviderRequest": "Relay / provider request",
+            "failureStageProviderDownload": "Download returned image",
+            "failureStageResponse": "Model response / refusal"
 },
     [language],
   );
@@ -458,41 +522,31 @@ export function JobDetailsClient({
       ].filter((row) => Boolean(row.originalValue.trim()) || Boolean(row.localizedValue.trim()))
     : [];
   const hasInputSnapshot = detailRows.length > 0;
-  const hasReferenceInsights =
-    details.job.creationMode === "reference-remix" &&
-    Boolean(details.job.referenceLayoutAnalysis || details.job.referencePosterCopy);
   const detailTabs = [
     hasInputSnapshot
       ? { id: "inputs" as const, label: language === "zh" ? "输入快照" : "Inputs" }
       : null,
-    hasReferenceInsights
-      ? { id: "reference" as const, label: language === "zh" ? "参考分析" : "Reference" }
-      : null,
     { id: "variants" as const, label: language === "zh" ? "变体归档" : "Variant archive" },
   ].filter(Boolean) as Array<{ id: DetailTabId; label: string }>;
 
-  const referenceStrengthText =
-    details.job.referenceStrength === "reference"
-      ? text.strengthReference
-      : details.job.referenceStrength === "product"
-        ? text.strengthProduct
-        : text.strengthBalanced;
-
   const comparableItems = details.items.filter((item) => item.generatedAsset);
-  const comparedItems = comparableItems.filter((item) => compareIds.includes(item.id));
-  const approvedItems = details.items.filter(
-    (item) => item.reviewStatus === "approved" && (item.generatedAsset || item.layoutAsset),
+  const lightboxItems = useMemo<DetailLightboxItem[]>(
+    () =>
+      comparableItems.map((item) => ({
+        actionHref: assetOriginalUrl(item.generatedAsset!.id),
+        alt: item.generatedAsset?.originalName || item.id,
+        itemId: item.id,
+        label: previewZoomAriaLabel(language, details.job.productName, item.variantIndex, comparableItems.length),
+        src: assetOriginalUrl(item.generatedAsset!.id),
+      })),
+    [comparableItems, details.job.productName, language],
   );
+  const comparedItems = comparableItems.filter((item) => compareIds.includes(item.id));
+  const approvedItems = details.items.filter((item) => item.reviewStatus === "approved" && item.generatedAsset);
   const approvedSummaryText =
     approvedItems.length > 0
       ? text.approvedSummary.replace("{count}", String(approvedItems.length))
       : text.noApproved;
-  const referenceLayoutJson = details.job.referenceLayoutAnalysis
-    ? JSON.stringify(details.job.referenceLayoutAnalysis, null, 2)
-    : "";
-  const referencePosterCopyJson = details.job.referencePosterCopy
-    ? JSON.stringify(details.job.referencePosterCopy, null, 2)
-    : "";
   const actualPromptLabel = details.job.creationMode === "reference-remix" ? text.directPrompt : text.prompt;
   const creationModeLabel =
     details.job.creationMode === "reference-remix"
@@ -508,6 +562,17 @@ export function JobDetailsClient({
       : details.job.creationMode === "prompt"
         ? text.promptMode
         : text.standardMode;
+  const promptTranslationLabel =
+    details.job.translatePromptToOutputLanguage === false
+      ? text.promptTranslationOff
+      : text.promptTranslationOn;
+  const promptOptimizationLabel = details.job.autoOptimizePrompt
+    ? text.promptOptimizationOn
+    : text.promptOptimizationOff;
+  const referenceCopyModeLabel =
+    details.job.referenceCopyMode === "copy-sheet"
+      ? text.referenceCopyModeCopySheet
+      : text.referenceCopyModeReference;
   const getDimensionWarning = (item: (typeof details.items)[number]) => {
     if (item.warningMessage) {
       return item.warningMessage;
@@ -527,8 +592,9 @@ export function JobDetailsClient({
       text.actualRatio
     }: ${formatRatio(item.generatedAsset.width, item.generatedAsset.height, text.unknown)}.`;
   };
-  const succeededCount = details.items.filter((item) => item.generatedAsset || item.layoutAsset).length;
+  const succeededCount = details.items.filter((item) => item.generatedAsset).length;
   const failedItems = details.items.filter((item) => item.status === "failed");
+  const providerRequestFailures = failedItems.filter((item) => item.providerDebug?.failureStage === "provider-request").length;
   const providerDownloadFailures = failedItems.filter(
     (item) => item.providerDebug?.failureStage === "provider-image-download",
   ).length;
@@ -541,12 +607,62 @@ export function JobDetailsClient({
     providerDownloadFailures > 0
       ? text.providerDownloadSummary.replace("{count}", String(providerDownloadFailures))
       : "";
+  const providerRequestSummaryText =
+    providerRequestFailures > 0
+      ? text.providerRequestSummary.replace("{count}", String(providerRequestFailures))
+      : "";
   const warningSummaryText =
     warningCount > 0 ? text.warningSummary.replace("{count}", String(warningCount)) : "";
   const createdAtLabel = new Date(details.job.createdAt).toLocaleString(language === "zh" ? "zh-CN" : "en-US");
   const activeItem = details.items.find((item) => item.id === activeItemId) ?? details.items[0] ?? null;
-  const activePreviewAsset = activeItem?.generatedAsset ?? activeItem?.layoutAsset ?? null;
+  const activePreviewAsset = activeItem?.generatedAsset ?? null;
   const activeDimensionWarning = activeItem ? getDimensionWarning(activeItem) : null;
+  const activeItemIndex = activeItem ? details.items.findIndex((item) => item.id === activeItem.id) : -1;
+  const activeLightboxIndex = lightboxItems.findIndex((item) => item.itemId === activeItemId);
+  const activeLightboxItem = activeLightboxIndex >= 0 ? lightboxItems[activeLightboxIndex] : null;
+  const canSelectPreviousItem = activeItemIndex > 0;
+  const canSelectNextItem = activeItemIndex >= 0 && activeItemIndex < details.items.length - 1;
+  const previousItemLabel = language === "zh" ? "上一项" : "Previous";
+  const nextItemLabel = language === "zh" ? "下一项" : "Next";
+  const previousImageLabel = language === "zh" ? "上一张图" : "Previous image";
+  const nextImageLabel = language === "zh" ? "下一张图" : "Next image";
+  const lightboxActionLabel = language === "zh" ? "查看原图" : "View original";
+  const currentFocusLabel = language === "zh" ? "当前查看" : "Current focus";
+  const currentFocusHint =
+    language === "zh"
+      ? "点击卡片或用上一项 / 下一项快速切换，当前项会自动定位到列表里。"
+      : "Switch by clicking a card or use previous / next. The current item stays in view.";
+  const currentFocusSummary =
+    activeItemIndex >= 0
+      ? language === "zh"
+        ? `当前查看 ${activeItemIndex + 1} / ${details.items.length}`
+        : `Viewing ${activeItemIndex + 1} / ${details.items.length}`
+      : language === "zh"
+        ? "暂无可查看项"
+        : "No active item";
+  const currentFocusMeta = activeItem
+    ? `${imageTypeLabel(language, activeItem.imageType, details.job.creationMode)}${text.separator}${activeItem.ratio}${text.separator}${activeItem.resolutionLabel}${text.separator}#${activeItem.variantIndex}`
+    : language === "zh"
+      ? "未选择生成项"
+      : "No variant selected";
+  const comparedSummary =
+    comparedItems.length > 0
+      ? language === "zh"
+        ? `已加入对比 ${comparedItems.length} 项`
+        : `${comparedItems.length} item(s) in compare`
+      : "";
+  const getFailureStageLabel = (failureStage?: string | null) => {
+    if (failureStage === "provider-request") {
+      return text.failureStageProviderRequest;
+    }
+    if (failureStage === "provider-image-download") {
+      return text.failureStageProviderDownload;
+    }
+    if (failureStage === "response") {
+      return text.failureStageResponse;
+    }
+    return null;
+  };
 
   useEffect(() => {
     if (detailTabs.some((tab) => tab.id === activeDetailTab)) {
@@ -555,6 +671,53 @@ export function JobDetailsClient({
 
     setActiveDetailTab(detailTabs[0]?.id ?? "variants");
   }, [activeDetailTab, detailTabs]);
+
+  useEffect(() => {
+    if (!activeItemId) {
+      return;
+    }
+
+    const activeCard = document.querySelector<HTMLElement>(`[data-variant-card-id="${activeItemId}"]`);
+    if (!activeCard) {
+      return;
+    }
+
+    const strip = activeCard.closest<HTMLElement>(".job-workbench-browser-strip");
+    if (!strip) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      const nextLeft = activeCard.offsetLeft;
+      const nextRight = nextLeft + activeCard.offsetWidth;
+      const currentLeft = strip.scrollLeft;
+      const currentRight = currentLeft + strip.clientWidth;
+      const padding = 16;
+
+      if (nextLeft < currentLeft + padding) {
+        strip.scrollTo({
+          left: Math.max(nextLeft - padding, 0),
+          behavior: "smooth",
+        });
+        return;
+      }
+
+      if (nextRight > currentRight - padding) {
+        strip.scrollTo({
+          left: Math.max(nextRight - strip.clientWidth + padding, 0),
+          behavior: "smooth",
+        });
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeItemId]);
+
+  useEffect(() => {
+    if (isLightboxOpen && activeLightboxIndex < 0) {
+      setIsLightboxOpen(false);
+    }
+  }, [activeLightboxIndex, isLightboxOpen]);
 
   async function handleCopy(fieldId: string, value: string) {
     try {
@@ -631,32 +794,6 @@ export function JobDetailsClient({
     }));
   }
 
-  function handleReusePrompt(item: (typeof details.items)[number]) {
-    if (!item.promptText) {
-      return;
-    }
-
-    window.localStorage.setItem(
-      CREATE_JOB_PROMPT_PREFILL_KEY,
-      JSON.stringify({
-        promptText: item.promptText,
-        productName: details.job.productName,
-        brandName: details.job.brandName,
-        category: details.job.category,
-        country: details.job.country,
-        language: details.job.language,
-        platform: details.job.platform,
-        ratio: item.ratio,
-        resolution: item.resolutionLabel,
-        creationMode: details.job.creationMode,
-        customNegativePrompt: details.job.customNegativePrompt,
-        referenceStrength: details.job.referenceStrength,
-      }),
-    );
-
-    router.push("/create");
-  }
-
   function toggleCompare(itemId: string) {
     setCompareIds((current) => {
       if (current.includes(itemId)) {
@@ -669,8 +806,47 @@ export function JobDetailsClient({
     });
   }
 
-  function joinOrEmpty(values: string[]) {
-    return values.length ? values.join(" / ") : text.empty;
+  function selectPreviousItem() {
+    if (!canSelectPreviousItem) {
+      return;
+    }
+
+    setActiveItemId(details.items[activeItemIndex - 1]?.id ?? null);
+  }
+
+  function selectNextItem() {
+    if (!canSelectNextItem) {
+      return;
+    }
+
+    setActiveItemId(details.items[activeItemIndex + 1]?.id ?? null);
+  }
+
+  function selectLightboxItem(nextIndex: number) {
+    const nextItem = lightboxItems[nextIndex];
+    if (!nextItem) {
+      return;
+    }
+
+    setActiveItemId(nextItem.itemId);
+  }
+
+  function openLightbox(itemId: string) {
+    if (!lightboxItems.some((item) => item.itemId === itemId)) {
+      return;
+    }
+
+    setActiveItemId(itemId);
+    setIsLightboxOpen(true);
+  }
+
+  function handleLightboxKeyDown(event: React.KeyboardEvent<HTMLImageElement>, itemId: string) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    openLightbox(itemId);
   }
 
   return (
@@ -691,14 +867,29 @@ export function JobDetailsClient({
             {text.separator}
             {creationModeLabel}
           </p>
+          {details.job.creationMode === "prompt" ? (
+            <>
+              <p className="helper">
+                {text.promptTranslation}
+                {text.separator}
+                {promptTranslationLabel}
+              </p>
+              <p className="helper">
+                {text.promptOptimization}
+                {text.separator}
+                {promptOptimizationLabel}
+              </p>
+            </>
+          ) : null}
           {details.job.creationMode === "reference-remix" ? (
             <p className="helper">
-              {text.referenceStrength}
+              {text.referenceCopyMode}
               {text.separator}
-              {referenceStrengthText}
+              {referenceCopyModeLabel}
             </p>
           ) : null}
           <p className="helper">{variantSummaryText}</p>
+          {providerRequestSummaryText ? <p className="helper">{providerRequestSummaryText}</p> : null}
           {providerDownloadSummaryText ? <p className="helper">{providerDownloadSummaryText}</p> : null}
           {warningSummaryText ? <p className="helper warning-text">{warningSummaryText}</p> : null}
           <p className="helper">{approvedSummaryText}</p>
@@ -752,12 +943,12 @@ export function JobDetailsClient({
                     {details.sourceAssets.map((asset) => (
                       <a
                         className="sidebar-asset-card"
-                        href={assetPreviewUrl(asset.id)}
+                        href={assetOriginalUrl(asset.id)}
                         key={asset.id}
                         rel="noreferrer"
                         target="_blank"
                       >
-                        <img alt={asset.originalName} src={assetPreviewUrl(asset.id)} />
+                        <img alt={asset.originalName} decoding="async" loading="lazy" src={assetSidebarUrl(asset.id)} />
                         <span>{asset.originalName}</span>
                       </a>
                     ))}
@@ -777,12 +968,12 @@ export function JobDetailsClient({
                     {details.referenceAssets.map((asset) => (
                       <a
                         className="sidebar-asset-card"
-                        href={assetPreviewUrl(asset.id)}
+                        href={assetOriginalUrl(asset.id)}
                         key={asset.id}
                         rel="noreferrer"
                         target="_blank"
                       >
-                        <img alt={asset.originalName} src={assetPreviewUrl(asset.id)} />
+                        <img alt={asset.originalName} decoding="async" loading="lazy" src={assetSidebarUrl(asset.id)} />
                         <span>{asset.originalName}</span>
                       </a>
                     ))}
@@ -845,52 +1036,86 @@ export function JobDetailsClient({
         </aside>
 
         <div className="job-details-main">
-          <section className="panel">
+          <section className="panel job-details-legacy-browser" hidden>
             <div className="split-header compact">
               <div>
                 <h3>{text.variantBrowser}</h3>
                 <p className="helper">{text.variantBrowserHint}</p>
               </div>
-              {comparedItems.length ? (
-                <button className="ghost-button mini-button" onClick={() => setCompareIds([])} type="button">
-                  {text.clearCompare}
-                </button>
-              ) : null}
             </div>
-            <div className="variant-browser-grid">
+            <div className="variant-browser-toolbar">
+              <div className="variant-browser-focus">
+                <span className="helper variant-browser-focus-label">{currentFocusLabel}</span>
+                <strong>{currentFocusSummary}</strong>
+                <p className="helper">{currentFocusMeta}</p>
+                <p className="helper">{currentFocusHint}</p>
+              </div>
+              <div className="variant-browser-toolbar-actions">
+                {comparedSummary ? <span className="variant-browser-summary-chip">{comparedSummary}</span> : null}
+                {comparedItems.length ? (
+                  <button className="ghost-button mini-button" onClick={() => setCompareIds([])} type="button">
+                    {text.clearCompare}
+                  </button>
+                ) : null}
+                <div className="variant-browser-nav">
+                  <button className="ghost-button mini-button" disabled={!canSelectPreviousItem} onClick={selectPreviousItem} type="button">
+                    {previousItemLabel}
+                  </button>
+                  <button className="ghost-button mini-button" disabled={!canSelectNextItem} onClick={selectNextItem} type="button">
+                    {nextItemLabel}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="variant-browser-grid" role="listbox">
               {details.items.map((item) => {
-                const previewAsset = item.generatedAsset ?? item.layoutAsset;
+                const previewAsset = item.generatedAsset;
+                const isActive = item.id === activeItem?.id;
+                const isCompared = compareIds.includes(item.id);
 
                 return (
                   <button
-                    className={item.id === activeItem?.id ? "variant-browser-card is-active" : "variant-browser-card"}
+                    aria-selected={isActive}
+                    className={isActive ? "variant-browser-card is-active" : "variant-browser-card"}
+                    data-legacy-variant-card-id={item.id}
                     key={item.id}
                     onClick={() => setActiveItemId(item.id)}
+                    role="option"
                     type="button"
                   >
                     <div className="variant-browser-thumb">
                       {previewAsset ? (
-                        <img alt={previewAsset.originalName} src={assetPreviewUrl(previewAsset.id)} />
+                        <img alt={previewAsset.originalName} decoding="async" loading="lazy" src={assetThumbUrl(previewAsset.id)} />
                       ) : (
                         <div className="variant-browser-thumb-placeholder">{statusText(language, item.status)}</div>
                       )}
+                      <span className="variant-browser-index">#{item.variantIndex}</span>
                     </div>
                     <div className="variant-browser-content">
-                      <strong className="variant-browser-title">
-                        {imageTypeLabel(language, item.imageType)}
-                        {text.separator}
+                      <div className="variant-browser-head">
+                        <strong className="variant-browser-title">
+                          {imageTypeLabel(language, item.imageType, details.job.creationMode)}
+                        </strong>
+                        {isActive ? (
+                          <span className="variant-browser-active-pill">{currentFocusLabel}</span>
+                        ) : null}
+                      </div>
+                      <span className="helper variant-browser-meta">
                         {item.ratio}
                         {text.separator}
                         {item.resolutionLabel}
-                        {text.separator}#{item.variantIndex}
-                      </strong>
-                      <span className="helper">{statusText(language, item.status)}</span>
+                      </span>
                       <div className="variant-browser-tags">
+                        <span className={`variant-browser-state is-${item.status}`}>{statusText(language, item.status)}</span>
                         <span className={`review-status-chip is-${item.reviewStatus}`}>
                           {reviewStatusText(language, item.reviewStatus)}
                         </span>
                         {item.generatedAsset ? <span className="variant-browser-chip">{text.generated}</span> : null}
-                        {item.layoutAsset ? <span className="variant-browser-chip">{text.layout}</span> : null}
+                        {isCompared ? (
+                          <span className="variant-browser-chip is-compared">
+                            {language === "zh" ? "对比中" : "Comparing"}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </button>
@@ -905,56 +1130,163 @@ export function JobDetailsClient({
                 <h3>{text.previewWorkspace}</h3>
                 <p className="helper">{text.previewWorkspaceHint}</p>
               </div>
-              {activeItem?.generatedAsset ? (
-                <button className="ghost-button mini-button" onClick={() => toggleCompare(activeItem.id)} type="button">
-                  {compareIds.includes(activeItem.id) ? text.removeCompare : text.addCompare}
-                </button>
-              ) : null}
             </div>
+            {activeItem ? (
+              <div className="job-workbench-topbar" hidden>
+                <div className="job-workbench-focus">
+                  <span className="helper">{currentFocusSummary}</span>
+                  <strong>{currentFocusMeta}</strong>
+                  <p className="helper">{statusText(language, activeItem.status)}</p>
+                </div>
+                <div className="job-workbench-topbar-actions">
+                  <div className="job-workbench-nav">
+                    <button className="ghost-button mini-button" disabled={!canSelectPreviousItem} onClick={selectPreviousItem} type="button">
+                      {previousItemLabel}
+                    </button>
+                    <button className="ghost-button mini-button" disabled={!canSelectNextItem} onClick={selectNextItem} type="button">
+                      {nextItemLabel}
+                    </button>
+                  </div>
+                  <div className="job-workbench-toolbar">
+                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "shortlisted")} type="button">
+                      {text.shortlisted}
+                    </button>
+                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "approved")} type="button">
+                      {text.approved}
+                    </button>
+                    <button className="ghost-button mini-button danger-button" onClick={() => handleReviewUpdate(activeItem.id, "rejected")} type="button">
+                      {text.rejected}
+                    </button>
+                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "unreviewed")} type="button">
+                      {text.resetReview}
+                    </button>
+                    {activeItem.generatedAsset ? (
+                      <button className="ghost-button mini-button" onClick={() => toggleCompare(activeItem.id)} type="button">
+                        {compareIds.includes(activeItem.id) ? text.removeCompare : text.addCompare}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {activeItem ? (
-              <div className="job-workbench-grid">
-                <div className="job-preview-stage">
-                  <div className="job-preview-media-grid">
-                    <figure className="job-preview-media-card">
-                      <figcaption>
-                        <strong>{text.generated}</strong>
-                        {activeItem.generatedAsset ? (
-                          <a download href={assetDownloadUrl(activeItem.generatedAsset.id)}>
-                            {text.download}
-                          </a>
-                        ) : null}
-                      </figcaption>
-                      {activeItem.generatedAsset ? (
-                        <img alt={activeItem.generatedAsset.originalName} src={assetPreviewUrl(activeItem.generatedAsset.id)} />
-                      ) : (
-                        <div className="job-preview-placeholder">{text.noGeneratedImage}</div>
-                      )}
-                    </figure>
-
-                    <figure className="job-preview-media-card">
-                      <figcaption>
-                        <strong>{text.layout}</strong>
-                        {activeItem.layoutAsset ? (
-                          <a download href={assetDownloadUrl(activeItem.layoutAsset.id)}>
-                            {text.download}
-                          </a>
-                        ) : null}
-                      </figcaption>
-                      {activeItem.layoutAsset ? (
-                        <img alt={activeItem.layoutAsset.originalName} src={assetPreviewUrl(activeItem.layoutAsset.id)} />
-                      ) : (
-                        <div className="job-preview-placeholder">{text.noLayoutImage}</div>
-                      )}
-                    </figure>
+              <div className="job-workbench-hero">
+                <div className="job-workbench-focus">
+                  <span className="helper variant-browser-focus-label">{currentFocusLabel}</span>
+                  <strong>{currentFocusSummary}</strong>
+                  <p className="helper">{currentFocusMeta}</p>
+                  <p className="helper">{currentFocusHint}</p>
+                  <div className="variant-browser-tags">
+                    <span className={`variant-browser-state is-${activeItem.status}`}>{statusText(language, activeItem.status)}</span>
+                    <span className={`review-status-chip is-${activeItem.reviewStatus}`}>
+                      {reviewStatusText(language, activeItem.reviewStatus)}
+                    </span>
+                    {activeItem.generatedAsset ? <span className="variant-browser-chip">{text.generated}</span> : null}
+                    {comparedSummary ? <span className="variant-browser-summary-chip">{comparedSummary}</span> : null}
                   </div>
+                </div>
+                <div className="job-workbench-hero-side">
+                  <div className="job-workbench-nav">
+                    <button className="ghost-button mini-button" disabled={!canSelectPreviousItem} onClick={selectPreviousItem} type="button">
+                      {previousItemLabel}
+                    </button>
+                    <button className="ghost-button mini-button" disabled={!canSelectNextItem} onClick={selectNextItem} type="button">
+                      {nextItemLabel}
+                    </button>
+                  </div>
+                  <div className="job-workbench-toolbar">
+                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "shortlisted")} type="button">
+                      {text.shortlisted}
+                    </button>
+                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "approved")} type="button">
+                      {text.approved}
+                    </button>
+                    <button className="ghost-button mini-button danger-button" onClick={() => handleReviewUpdate(activeItem.id, "rejected")} type="button">
+                      {text.rejected}
+                    </button>
+                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "unreviewed")} type="button">
+                      {text.resetReview}
+                    </button>
+                    {activeItem.generatedAsset ? (
+                      <button className="ghost-button mini-button" onClick={() => toggleCompare(activeItem.id)} type="button">
+                        {compareIds.includes(activeItem.id) ? text.removeCompare : text.addCompare}
+                      </button>
+                    ) : null}
+                    {comparedItems.length ? (
+                      <button className="ghost-button mini-button" onClick={() => setCompareIds([])} type="button">
+                        {text.clearCompare}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeItem ? (
+              <>
+                <div className="job-workbench-grid">
+                <div className="job-preview-stage">
+                  <figure className="job-preview-stage-card">
+                    <figcaption className="job-preview-stage-head">
+                      <div>
+                        <strong>{text.generated}</strong>
+                        <p className="helper">{text.zoomHint}</p>
+                      </div>
+                      {activeItem.generatedAsset ? (
+                        <a download href={assetDownloadUrl(activeItem.generatedAsset.id)}>
+                          {text.download}
+                        </a>
+                      ) : null}
+                    </figcaption>
+                    {activeItem.generatedAsset ? (
+                      <div className="job-preview-stage-media">
+                        <img
+                          alt={activeItem.generatedAsset.originalName}
+                          aria-label={previewZoomAriaLabel(
+                            language,
+                            details.job.productName,
+                            activeItem.variantIndex,
+                            details.items.length,
+                          )}
+                          className="job-preview-stage-image"
+                          decoding="async"
+                          onClick={() => openLightbox(activeItem.id)}
+                          onKeyDown={(event) => handleLightboxKeyDown(event, activeItem.id)}
+                          role="button"
+                          src={assetPreviewUrl(activeItem.generatedAsset.id)}
+                          tabIndex={0}
+                        />
+                        <button
+                          aria-label={previousItemLabel}
+                          className="job-preview-stage-nav-button is-previous"
+                          disabled={!canSelectPreviousItem}
+                          onClick={selectPreviousItem}
+                          type="button"
+                        >
+                          <ChevronIcon direction="left" />
+                        </button>
+                        <button
+                          aria-label={nextItemLabel}
+                          className="job-preview-stage-nav-button is-next"
+                          disabled={!canSelectNextItem}
+                          onClick={selectNextItem}
+                          type="button"
+                        >
+                          <ChevronIcon direction="right" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="job-preview-placeholder">{text.noGeneratedImage}</div>
+                    )}
+                  </figure>
                 </div>
 
                 <aside className="job-preview-sidebar">
                   <div className="job-preview-header">
                     <div>
                       <strong>
-                        {imageTypeLabel(language, activeItem.imageType)}
+                        {imageTypeLabel(language, activeItem.imageType, details.job.creationMode)}
                         {text.separator}
                         {activeItem.ratio}
                         {text.separator}
@@ -1011,21 +1343,6 @@ export function JobDetailsClient({
                     </div>
                   </div>
 
-                  <div className="variant-actions">
-                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "shortlisted")} type="button">
-                      {text.shortlisted}
-                    </button>
-                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "approved")} type="button">
-                      {text.approved}
-                    </button>
-                    <button className="ghost-button mini-button danger-button" onClick={() => handleReviewUpdate(activeItem.id, "rejected")} type="button">
-                      {text.rejected}
-                    </button>
-                    <button className="ghost-button mini-button" onClick={() => handleReviewUpdate(activeItem.id, "unreviewed")} type="button">
-                      {text.resetReview}
-                    </button>
-                  </div>
-
                   {activeDimensionWarning ? (
                     <div className="provider-debug-panel">
                       <div className="detail-kv-head">
@@ -1053,6 +1370,7 @@ export function JobDetailsClient({
                     <>
                       <p className="error-text">{activeItem.errorMessage}</p>
                       {activeItem.providerDebug?.imageUrl ||
+                      activeItem.providerDebug?.failureStage ||
                       activeItem.providerDebug?.failureReason ||
                       activeItem.providerDebug?.rawText ? (
                         <div className="provider-debug-panel">
@@ -1076,6 +1394,12 @@ export function JobDetailsClient({
                               <dd>{activeItem.providerDebug.imageUrl}</dd>
                             </div>
                           ) : null}
+                          {getFailureStageLabel(activeItem.providerDebug?.failureStage) ? (
+                            <div className="detail-kv-card provider-debug-card">
+                              <dt>{text.failureStage}</dt>
+                              <dd>{getFailureStageLabel(activeItem.providerDebug?.failureStage)}</dd>
+                            </div>
+                          ) : null}
                           {activeItem.providerDebug?.failureReason ? (
                             <div className="detail-kv-card provider-debug-card">
                               <dt>{text.failureReason}</dt>
@@ -1094,17 +1418,12 @@ export function JobDetailsClient({
                   ) : null}
 
                   {activeItem.promptText ? (
-                    <details className="details-drawer prompt-details-drawer" open={Boolean(activePreviewAsset)}>
+                    <details className="details-drawer prompt-details-drawer" key={`prompt-drawer-${activeItem.id}`}>
                       <summary>{actualPromptLabel}</summary>
                       <div className="prompt-debug-panel">
                         <div className="detail-kv-head">
                           <strong>{actualPromptLabel}</strong>
                           <div className="button-row compact-row">
-                            {details.job.creationMode === "reference-remix" ? (
-                              <button className="ghost-button mini-button" onClick={() => handleReusePrompt(activeItem)} type="button">
-                                {text.reusePrompt}
-                              </button>
-                            ) : null}
                             <button
                               className={`copy-chip-button${copiedFieldId === `prompt-${activeItem.id}` ? " is-copied" : ""}`}
                               onClick={() => handleCopy(`prompt-${activeItem.id}`, activeItem.promptText || "")}
@@ -1120,6 +1439,70 @@ export function JobDetailsClient({
                   ) : null}
                 </aside>
               </div>
+
+                <div className="job-workbench-browser">
+                <div className="job-workbench-browser-head">
+                  <div>
+                    <strong>{text.variantBrowser}</strong>
+                    <p className="helper">{text.variantBrowserHint}</p>
+                  </div>
+                  <p className="helper">{currentFocusHint}</p>
+                </div>
+                <div className="job-workbench-browser-strip" role="listbox">
+                  {details.items.map((item) => {
+                    const previewAsset = item.generatedAsset;
+                    const isActive = item.id === activeItem?.id;
+                    const isCompared = compareIds.includes(item.id);
+
+                    return (
+                      <button
+                        aria-selected={isActive}
+                        className={isActive ? "variant-browser-card is-active" : "variant-browser-card"}
+                        data-variant-card-id={item.id}
+                        key={item.id}
+                        onClick={() => setActiveItemId(item.id)}
+                        role="option"
+                        type="button"
+                      >
+                        <div className="variant-browser-thumb">
+                          {previewAsset ? (
+                            <img alt={previewAsset.originalName} decoding="async" loading="lazy" src={assetThumbUrl(previewAsset.id)} />
+                          ) : (
+                            <div className="variant-browser-thumb-placeholder">{statusText(language, item.status)}</div>
+                          )}
+                          <span className="variant-browser-index">#{item.variantIndex}</span>
+                        </div>
+                        <div className="variant-browser-content">
+                          <div className="variant-browser-head">
+                            <strong className="variant-browser-title">
+                              {imageTypeLabel(language, item.imageType, details.job.creationMode)}
+                            </strong>
+                            {isActive ? <span className="variant-browser-active-pill">{currentFocusLabel}</span> : null}
+                          </div>
+                          <span className="helper variant-browser-meta">
+                            {item.ratio}
+                            {text.separator}
+                            {item.resolutionLabel}
+                          </span>
+                          <div className="variant-browser-tags">
+                            <span className={`variant-browser-state is-${item.status}`}>{statusText(language, item.status)}</span>
+                            <span className={`review-status-chip is-${item.reviewStatus}`}>
+                              {reviewStatusText(language, item.reviewStatus)}
+                            </span>
+                            {item.generatedAsset ? <span className="variant-browser-chip">{text.generated}</span> : null}
+                            {isCompared ? (
+                              <span className="variant-browser-chip is-compared">
+                                {language === "zh" ? "瀵规瘮涓?" : "Comparing"}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                </div>
+              </>
             ) : (
               <p className="helper">{text.noPreviewAvailable}</p>
             )}
@@ -1137,10 +1520,20 @@ export function JobDetailsClient({
               <div className="compare-grid">
                 {comparedItems.map((item) => (
                   <article className="compare-card" key={item.id}>
-                    <img alt={item.generatedAsset?.originalName || item.id} src={assetPreviewUrl(item.generatedAsset!.id)} />
+                    <img
+                      alt={item.generatedAsset?.originalName || item.id}
+                      aria-label={previewZoomAriaLabel(language, details.job.productName, item.variantIndex, comparedItems.length)}
+                      decoding="async"
+                      loading="lazy"
+                      onClick={() => openLightbox(item.id)}
+                      onKeyDown={(event) => handleLightboxKeyDown(event, item.id)}
+                      role="button"
+                      src={assetCompareUrl(item.generatedAsset!.id)}
+                      tabIndex={0}
+                    />
                     <div className="compare-card-meta">
                       <strong>
-                        {imageTypeLabel(language, item.imageType)}
+                        {imageTypeLabel(language, item.imageType, details.job.creationMode)}
                         {text.separator}
                         {item.ratio}
                         {text.separator}
@@ -1247,120 +1640,6 @@ export function JobDetailsClient({
         </section>
       ) : null}
 
-      {activeDetailTab === "reference" &&
-      details.job.creationMode === "reference-remix" &&
-      details.job.referenceLayoutAnalysis ? (
-        <section className="detail-tab-section">
-          <details className="details-drawer compact-details" open>
-            <summary>{text.referenceLayout}</summary>
-            <dl className="detail-kv-grid single-column">
-            <div className="detail-kv-card">
-              <dt>{text.summary}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.summary || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.backgroundType}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.backgroundType || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.primaryPlacement}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.primaryProductPlacement || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.packagingPlacement}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.packagingPlacement || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.packagingRelationship}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.productPackagingRelationship || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.camera}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.cameraAngle || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.lighting}</dt>
-              <dd>{details.job.referenceLayoutAnalysis.depthAndLighting || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.palette}</dt>
-              <dd>{joinOrEmpty(details.job.referenceLayoutAnalysis.palette)}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.props}</dt>
-              <dd>{joinOrEmpty(details.job.referenceLayoutAnalysis.supportingProps)}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <div className="detail-kv-head">
-                <dt>JSON</dt>
-                <button
-                  className={`copy-chip-button${copiedFieldId === "reference-layout-json" ? " is-copied" : ""}`}
-                  onClick={() => handleCopy("reference-layout-json", referenceLayoutJson)}
-                  type="button"
-                >
-                  {copiedFieldId === "reference-layout-json" ? text.copied : text.copy}
-                </button>
-              </div>
-              <dd>
-                <pre className="json-block">{referenceLayoutJson}</pre>
-              </dd>
-            </div>
-            </dl>
-          </details>
-        </section>
-      ) : null}
-
-      {activeDetailTab === "reference" &&
-      details.job.creationMode === "reference-remix" &&
-      details.job.referencePosterCopy ? (
-        <section className="detail-tab-section">
-          <details className="details-drawer compact-details">
-            <summary>{text.referencePosterCopy}</summary>
-            <dl className="detail-kv-grid single-column">
-            <div className="detail-kv-card">
-              <dt>{text.summary}</dt>
-              <dd>{details.job.referencePosterCopy.summary || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.topBanner}</dt>
-              <dd>{details.job.referencePosterCopy.topBanner || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.headline}</dt>
-              <dd>{details.job.referencePosterCopy.headline || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.subheadline}</dt>
-              <dd>{details.job.referencePosterCopy.subheadline || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.bottomBanner}</dt>
-              <dd>{details.job.referencePosterCopy.bottomBanner || text.empty}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <dt>{text.callouts}</dt>
-              <dd>{joinOrEmpty(details.job.referencePosterCopy.callouts)}</dd>
-            </div>
-            <div className="detail-kv-card">
-              <div className="detail-kv-head">
-                <dt>JSON</dt>
-                <button
-                  className={`copy-chip-button${copiedFieldId === "reference-poster-copy-json" ? " is-copied" : ""}`}
-                  onClick={() => handleCopy("reference-poster-copy-json", referencePosterCopyJson)}
-                  type="button"
-                >
-                  {copiedFieldId === "reference-poster-copy-json" ? text.copied : text.copy}
-                </button>
-              </div>
-              <dd>
-                <pre className="json-block">{referencePosterCopyJson}</pre>
-              </dd>
-            </div>
-            </dl>
-          </details>
-        </section>
-      ) : null}
-
       {activeDetailTab === "variants" ? (
       <section className="detail-tab-section">
           <p className="helper">
@@ -1377,7 +1656,7 @@ export function JobDetailsClient({
               <summary>
                 <span className="variant-drawer-summary">
                   <span className="variant-drawer-title">
-                    {imageTypeLabel(language, item.imageType)}
+                    {imageTypeLabel(language, item.imageType, details.job.creationMode)}
                     {text.separator}
                     {item.ratio}
                     {text.separator}
@@ -1390,7 +1669,6 @@ export function JobDetailsClient({
                     </span>
                     <span className="variant-browser-chip">{statusText(language, item.status)}</span>
                     {item.generatedAsset ? <span className="variant-browser-chip">{text.generated}</span> : null}
-                    {item.layoutAsset ? <span className="variant-browser-chip">{text.layout}</span> : null}
                     {item.id === activeItem?.id ? (
                       <span className="variant-browser-chip is-focus-chip">
                         {language === "zh" ? "当前焦点" : "Focused"}
@@ -1403,7 +1681,7 @@ export function JobDetailsClient({
               <header className="variant-header">
                 <div>
                   <h4>
-                    {imageTypeLabel(language, item.imageType)}
+                    {imageTypeLabel(language, item.imageType, details.job.creationMode)}
                     {text.separator}
                     {item.ratio}
                     {text.separator}
@@ -1427,21 +1705,20 @@ export function JobDetailsClient({
               <div className="asset-grid">
                 {item.generatedAsset ? (
                   <figure className="asset-card">
-                    <img alt={item.generatedAsset.originalName} src={assetPreviewUrl(item.generatedAsset.id)} />
+                    <img
+                      alt={item.generatedAsset.originalName}
+                      aria-label={previewZoomAriaLabel(language, details.job.productName, item.variantIndex, details.items.length)}
+                      decoding="async"
+                      loading="lazy"
+                      onClick={() => openLightbox(item.id)}
+                      onKeyDown={(event) => handleLightboxKeyDown(event, item.id)}
+                      role="button"
+                      src={assetGridUrl(item.generatedAsset.id)}
+                      tabIndex={0}
+                    />
                     <figcaption>
                       {text.generated}
                       <a download href={assetDownloadUrl(item.generatedAsset.id)}>
-                        {text.download}
-                      </a>
-                    </figcaption>
-                  </figure>
-                ) : null}
-                {item.layoutAsset ? (
-                  <figure className="asset-card">
-                    <img alt={item.layoutAsset.originalName} src={assetPreviewUrl(item.layoutAsset.id)} />
-                    <figcaption>
-                      {text.layout}
-                      <a download href={assetDownloadUrl(item.layoutAsset.id)}>
                         {text.download}
                       </a>
                     </figcaption>
@@ -1523,7 +1800,7 @@ export function JobDetailsClient({
               ) : item.errorMessage ? (
                 <>
                   <p className="error-text">{item.errorMessage}</p>
-                  {item.providerDebug?.imageUrl || item.providerDebug?.failureReason || item.providerDebug?.rawText ? (
+                  {item.providerDebug?.imageUrl || item.providerDebug?.failureStage || item.providerDebug?.failureReason || item.providerDebug?.rawText ? (
                     <div className="provider-debug-panel">
                       {item.providerDebug?.imageUrl ? (
                         <div className="detail-kv-card provider-debug-card">
@@ -1543,6 +1820,12 @@ export function JobDetailsClient({
                             </div>
                           </div>
                           <dd>{item.providerDebug.imageUrl}</dd>
+                        </div>
+                      ) : null}
+                      {getFailureStageLabel(item.providerDebug?.failureStage) ? (
+                        <div className="detail-kv-card provider-debug-card">
+                          <dt>{text.failureStage}</dt>
+                          <dd>{getFailureStageLabel(item.providerDebug?.failureStage)}</dd>
                         </div>
                       ) : null}
                       {item.providerDebug?.failureReason ? (
@@ -1567,11 +1850,6 @@ export function JobDetailsClient({
                   <div className="detail-kv-head">
                     <strong>{actualPromptLabel}</strong>
                 <div className="button-row compact-row">
-                  {details.job.creationMode === "reference-remix" ? (
-                    <button className="ghost-button mini-button" onClick={() => handleReusePrompt(item)} type="button">
-                      {text.reusePrompt}
-                    </button>
-                      ) : null}
                       <button
                         className={`copy-chip-button${copiedFieldId === `prompt-${item.id}` ? " is-copied" : ""}`}
                         onClick={() => handleCopy(`prompt-${item.id}`, item.promptText || "")}
@@ -1591,6 +1869,20 @@ export function JobDetailsClient({
       </section>
       ) : null}
       </section>
+      <ImageLightbox
+        closeLabel={language === "zh" ? "关闭预览" : "Close preview"}
+        actionHref={activeLightboxItem?.actionHref}
+        actionLabel={lightboxActionLabel}
+        canNext={isLightboxOpen && activeLightboxIndex >= 0 && activeLightboxIndex < lightboxItems.length - 1}
+        canPrev={isLightboxOpen && activeLightboxIndex > 0}
+        currentIndex={isLightboxOpen ? activeLightboxIndex : -1}
+        items={lightboxItems}
+        nextLabel={nextImageLabel}
+        onClose={() => setIsLightboxOpen(false)}
+        onNext={() => selectLightboxItem(activeLightboxIndex + 1)}
+        onPrev={() => selectLightboxItem(activeLightboxIndex - 1)}
+        previousLabel={previousImageLabel}
+      />
     </div>
   );
 }

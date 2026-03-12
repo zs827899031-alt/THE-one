@@ -9,7 +9,6 @@ import { getJobDetails } from "@/lib/db";
 export const runtime = "nodejs";
 
 const PURE_IMAGE_FOLDER = "纯图";
-const LAYOUT_IMAGE_FOLDER = "文案图";
 
 const MIME_EXTENSION_MAP: Record<string, string> = {
   "image/png": ".png",
@@ -71,9 +70,7 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
     return NextResponse.json({ error: "Job not found." }, { status: 404 });
   }
 
-  const approvedItems = details.items.filter(
-    (item) => item.reviewStatus === "approved" && (item.generatedAsset || item.layoutAsset),
-  );
+  const approvedItems = details.items.filter((item) => item.reviewStatus === "approved" && item.generatedAsset);
 
   if (!approvedItems.length) {
     return NextResponse.json({ error: "No approved images found for this job." }, { status: 400 });
@@ -89,17 +86,9 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
       slugifySegment(item.resolutionLabel),
     ].join("_");
 
-    if (item.generatedAsset) {
-      const buffer = await fs.readFile(item.generatedAsset.filePath);
-      const fileName = inferDownloadName(item.generatedAsset.originalName, item.generatedAsset.mimeType);
-      zipEntries[`${PURE_IMAGE_FOLDER}/${basePrefix}_image${path.extname(fileName) || ".bin"}`] = new Uint8Array(buffer);
-    }
-
-    if (item.layoutAsset) {
-      const buffer = await fs.readFile(item.layoutAsset.filePath);
-      const fileName = inferDownloadName(item.layoutAsset.originalName, item.layoutAsset.mimeType);
-      zipEntries[`${LAYOUT_IMAGE_FOLDER}/${basePrefix}_layout${path.extname(fileName) || ".bin"}`] = new Uint8Array(buffer);
-    }
+    const buffer = await fs.readFile(item.generatedAsset!.filePath);
+    const fileName = inferDownloadName(item.generatedAsset!.originalName, item.generatedAsset!.mimeType);
+    zipEntries[`${PURE_IMAGE_FOLDER}/${basePrefix}_image${path.extname(fileName) || ".bin"}`] = new Uint8Array(buffer);
   }
 
   const zipBuffer = Buffer.from(zipSync(zipEntries, { level: 6 }));

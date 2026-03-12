@@ -9,22 +9,46 @@ export default async function SettingsPage() {
   const settings = getSettings();
   const brands = listBrands();
 
+  const highlights =
+    language === "zh"
+      ? [
+          { label: "Provider", value: "Gemini", description: "官方接口与 relay 统一接入" },
+          { label: "Sync", value: "Feishu", description: "字段映射、连通测试与写回" },
+          { label: "Ops", value: "Queue", description: "素材目录、并发配额与节奏控制" },
+        ]
+      : [
+          { label: "Provider", value: "Gemini", description: "Official and relay access in one place" },
+          { label: "Sync", value: "Feishu", description: "Mapping, connectivity tests, and write-back" },
+          { label: "Ops", value: "Queue", description: "Assets, concurrency, and pacing controls" },
+        ];
+
   return (
-    <div className="stack gap-24">
-      <section className="panel">
-        <p className="eyebrow">{t(language, "navSettings")}</p>
-        <h2>{t(language, "settingsTitle")}</h2>
-        <p>
-          {language === "zh"
-            ? "这里同时支持 Google 官方 Gemini、Gemini 兼容中转，以及飞书多维表格自动同步。使用官方接口时，Base URL 留空即可；使用中转时，填写对方提供的 base_url。"
-            : "This page supports the official Google Gemini API, Gemini-compatible relay services, and automatic Feishu Bitable sync. Leave Base URL empty for Google, or paste the relay provider's base_url here."}
-        </p>
+    <div className="stack gap-24 settings-page">
+      <section className="panel page-hero settings-page-intro">
+        <div className="page-hero-copy">
+          <p className="eyebrow">{t(language, "navSettings")}</p>
+          <h2>{t(language, "settingsTitle")}</h2>
+          <p>
+            {language === "zh"
+              ? "把模型接入、同步链路和运行节奏收拢到一个控制台里，让团队环境更可控、可测、可交付。"
+              : "Bring providers, sync workflows, and runtime controls into one console so the team setup stays testable and deliverable."}
+          </p>
+        </div>
+        <div className="page-hero-meta">
+          <div className="page-kpi-grid">
+            {highlights.map((item) => (
+              <article className="page-kpi" key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <p>{item.description}</p>
+              </article>
+            ))}
+          </div>
+        </div>
       </section>
 
-      <section className="settings-layout">
-        <SettingsForm initialSettings={settings} language={language} />
-        <BrandLibraryManager initialBrands={brands} language={language} />
-      </section>
+      <SettingsForm initialSettings={settings} language={language} />
+      <BrandLibraryManager initialBrands={brands} language={language} />
     </div>
   );
 }

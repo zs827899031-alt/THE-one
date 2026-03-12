@@ -24,6 +24,8 @@ export const FEISHU_FIELD_MAPPING_KEYS: Array<keyof FeishuFieldMapping> = [
   "requestedSize",
   "actualSize",
   "status",
+  "promptTranslation",
+  "promptOptimization",
   "prompt",
   "negativePrompt",
   "createdAt",
@@ -33,16 +35,18 @@ export const FEISHU_FIELD_MAPPING_KEYS: Array<keyof FeishuFieldMapping> = [
 export const RECOMMENDED_FEISHU_FIELD_MAPPING: FeishuFieldMapping = {
   title: "标题",
   image: "生成图片",
-  mode: "创作模式",
-  platform: "平台",
-  country: "国家",
+  mode: "生图模式",
   language: "语言",
+  promptTranslation: "提示词翻译",
+  promptOptimization: "真实照片优化",
   typeSummary: "图片统计",
   ratioSummary: "比例汇总",
   resolutionSummary: "分辨率汇总",
   sizeSummary: "尺寸汇总",
   statusSummary: "生成统计",
+  status: "任务状态",
   prompt: "提示词摘要",
+  negativePrompt: "负向提示词",
   createdAt: "生成时间",
   jobId: "任务ID",
 };
@@ -532,15 +536,15 @@ async function uploadAssetToFeishuBitable(input: {
 function buildModeLabel(mode: JobRecord["creationMode"]) {
   switch (mode) {
     case "amazon-a-plus":
-      return "亚马逊A+图";
+      return "亚马逊A+模式";
     case "suite":
       return "套图模式";
     case "prompt":
       return "提示词模式";
     case "reference-remix":
-      return "参考图复刻";
+      return "参考图复刻模式";
     default:
-      return "标准出图";
+      return "标准模式";
   }
 }
 
@@ -594,6 +598,22 @@ function buildJobStatusLabel(status: JobRecord["status"]) {
   }
 }
 
+function buildPromptTranslationLabel(job: JobRecord) {
+  if (job.uiLanguage === "en") {
+    return job.translatePromptToOutputLanguage === false ? "Keep original wording" : "Translate to output language";
+  }
+
+  return job.translatePromptToOutputLanguage === false ? "保留原文" : "翻译为输出语言";
+}
+
+function buildPromptOptimizationLabel(job: JobRecord) {
+  if (job.uiLanguage === "en") {
+    return job.autoOptimizePrompt ? "Enabled" : "Disabled";
+  }
+
+  return job.autoOptimizePrompt ? "已开启" : "未开启";
+}
+
 function buildTaskTitle(job: JobRecord) {
   const promptTitle = job.customPrompt?.trim().slice(0, 60);
   const baseTitle = job.productName?.trim() || promptTitle || "AI 生成图片";
@@ -645,7 +665,18 @@ function summarizeStatus(items: JobDetails["items"]) {
   const total = items.length;
   const success = items.filter((item) => item.status === "completed").length;
   const failed = items.filter((item) => item.status === "failed").length;
-  return `成功 ${success} / 失败 ${failed} / 总计 ${total}`;
+  const requestFailures = items.filter((item) => item.providerDebug?.failureStage === "provider-request").length;
+  const downloadFailures = items.filter((item) => item.providerDebug?.failureStage === "provider-image-download").length;
+  const responseFailures = items.filter((item) => item.providerDebug?.failureStage === "response").length;
+  const breakdown = [
+    requestFailures > 0 ? `请求失败 ${requestFailures}` : null,
+    downloadFailures > 0 ? `下载失败 ${downloadFailures}` : null,
+    responseFailures > 0 ? `模型拒绝/响应异常 ${responseFailures}` : null,
+  ]
+    .filter(Boolean)
+    .join(" / ");
+
+  return breakdown ? `成功 ${success} / 失败 ${failed} / 总计 ${total} · ${breakdown}` : `成功 ${success} / 失败 ${failed} / 总计 ${total}`;
 }
 
 function summarizeRequestedSizes(items: JobDetails["items"]) {
@@ -730,6 +761,8 @@ function buildTaskFields(input: {
   putField(fields, input.mapping, "platform", input.job.platform);
   putField(fields, input.mapping, "country", input.job.country);
   putField(fields, input.mapping, "language", input.job.language);
+  putField(fields, input.mapping, "promptTranslation", buildPromptTranslationLabel(input.job));
+  putField(fields, input.mapping, "promptOptimization", buildPromptOptimizationLabel(input.job));
   putField(fields, input.mapping, "typeSummary", typeSummary);
   putField(fields, input.mapping, "ratio", ratioSummary);
   putField(fields, input.mapping, "ratioSummary", ratioSummary);

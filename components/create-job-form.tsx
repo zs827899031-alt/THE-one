@@ -23,8 +23,16 @@ interface TemplateMatchPreview {
   candidates: TemplateRecord[];
 }
 
+type SubmitBlockReason =
+  | "files"
+  | "prompt"
+  | "reference"
+  | "product-name"
+  | "suite-selling-points"
+  | "suite-material"
+  | "suite-size";
+
 const CREATE_JOB_DRAFT_KEY = "commerce-image-studio.create-draft.v1";
-const CREATE_JOB_PROMPT_PREFILL_KEY = "commerce-image-studio.create-prompt-prefill.v1";
 const INITIAL_SELECTED_TYPES = ["scene", "detail", "pain-point"];
 const SUITE_SELECTED_TYPES = ["main-image", "lifestyle", "feature-overview", "scene", "material-craft", "size-spec"];
 const AMAZON_A_PLUS_SELECTED_TYPES = ["poster", "feature-overview", "multi-scene", "detail", "size-spec", "culture-value"];
@@ -39,6 +47,7 @@ const INITIAL_PAYLOAD = {
   creationMode: "standard" as "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus",
   referenceStrength: "balanced" as "reference" | "balanced" | "product",
   preserveReferenceText: true,
+  referenceCopyMode: "reference" as "reference" | "copy-sheet",
   productName: "",
   sku: "",
   brandName: "",
@@ -50,6 +59,7 @@ const INITIAL_PAYLOAD = {
   sizeInfo: "",
   customPrompt: "",
   customNegativePrompt: "",
+  translatePromptToOutputLanguage: false,
   autoOptimizePrompt: false,
   country: "US",
   language: "en-US",
@@ -69,14 +79,14 @@ const INITIAL_PAYLOAD = {
 function copyFor(language: UiLanguage) {
   return language === "zh"
     ? {
-        sourceImages: "商品原图",
-        sourceImagesOptionalHint: "提示词模式下可不上传商品图，直接按自定义提示词生成。",
-        sourceImagesExpand: "展开商品原图（可选）",
-        sourceImagesCollapse: "收起商品原图",
+        sourceImages: "图片原图",
+        sourceImagesOptionalHint: "提示词模式下可不上传图片，直接按自定义提示词生成。",
+        sourceImagesExpand: "展开图片原图（可选）",
+        sourceImagesCollapse: "收起图片原图",
         referenceImages: "参考图",
-        referenceHint: "上传一张或多张参考图，系统会保留整体构图与氛围，并把主体替换成你的商品。",
+        referenceHint: "上传一张参考图即可。系统会把参考图当作母版，只替换原图主体与同类关联元素；默认尽量保留参考图原文案，如需改字可切换到“按文案表格”。",
         creationMode: "创作模式",
-        creationModeHint: "标准模式基于商品原图优化；套图模式生成一整套通用商品图；亚马逊A+模式生成固定详情模块；提示词模式由你直接输入文字提示；参考图复刻会额外读取参考图并复刻整体画面结构。",
+        creationModeHint: "标准模式基于图片原图优化；套图模式生成一整套通用图片套图；亚马逊A+模式生成固定详情模块；提示词模式由你直接输入文字提示；参考图复刻会直接用原图主体还原参考图画面。",
         standardMode: "标准出图",
         promptMode: "提示词模式",
         referenceMode: "参考图复刻",
@@ -84,20 +94,32 @@ function copyFor(language: UiLanguage) {
         customPromptHint: "直接写你希望生成的画面、风格、背景、光线、构图和细节要求。",
         customNegativePrompt: "负向提示词",
         customNegativePromptHint: "填写你不希望出现的内容，比如“不要手部”“不要英文文字”“不要厨房背景”。",
+        translatePromptToOutputLanguage: "翻译为输出语言",
+        translatePromptToOutputLanguageHint:
+          "开启后，会先把你填写的提示词和负向提示词翻译成当前输出语言；关闭后保留原文。",
         autoOptimizePrompt: "自动优化为真实照片",
         autoOptimizePromptHint:
-          "开启后，系统会先把你写的提示词优化成更适合真实摄影出图的文本，优先强调真实光线、镜头感、材质细节、自然阴影和商业摄影质感；关闭后将尽量按原文直接出图。",
+          "开启后，会在当前提示词基础上进一步优化成更适合真实摄影出图的文本，优先强调真实光线、镜头感、材质细节、自然阴影和商业摄影质感。",
         promptModePanelHint: "提示词模式不会使用模板匹配，系统会优先按你填写的文字提示词出图。",
-        promptOptionalContext: "补充商品上下文（可选）",
+        promptOptionalContext: "补充图片上下文（可选）",
         promptOptionalContextHint: "如果你只想直接按提示词出图，下面这些字段都可以留空。",
         referenceStrength: "复刻强度",
-        referenceStrengthHint: "控制最终画面更接近参考图，还是更保留商品原有场景表达。",
+        referenceStrengthHint: "控制最终画面更接近参考图，还是更保留原图场景表达。",
         preserveReferenceText: "尽量保留参考图原文字与字体风格",
         preserveReferenceTextHint: "开启后，会优先保留参考图里的原始文字内容、字体风格、描边感觉和文案区块位置，而不是重写一整套新文案。",
+        referenceCopyMode: "文案来源",
+        referenceCopyModeHint: "参考图仍然是母版。这里只决定参考图里需要改掉的文案，优先按哪一套来源处理。",
+        referenceCopyModeReference: "完全参照原图",
+        referenceCopyModeReferenceHint: "默认尽量保留参考图原文案，只在主体替换后出现明显冲突时做最小必要改字。",
+        referenceCopyModeCopySheet: "按文案表格",
+        referenceCopyModeCopySheetHint: "保持参考图的文字版式、字体风格和区块位置，但需要替换的文案优先按下方字段生成；字段缺失时回退到原图识别。",
+        referenceCopySheetFields: "文案表格（可选）",
+        referenceCopySheetFieldsHint: "只有在“按文案表格”时才会使用这些字段；留空部分会回退到原图内容识别。",
+        referenceSingleHint: "仅使用第一张参考图。",
         strengthReference: "更像参考图",
         strengthBalanced: "平衡",
-        strengthProduct: "更像原商品场景",
-        remakeSimplifiedHint: "复刻模式默认走参考图直驱复刻：优先保留参考图构图、横幅、字体风格和包装关系。你只需要选择比例、分辨率和生成数量。",
+        strengthProduct: "更像原图场景",
+        remakeSimplifiedHint: "严格还原参考图，只替换主体与所有同类关联元素。复刻模式只保留图1基础参数：比例、分辨率和生成数量，不再参与市场参数、模板、复刻强度或额外 JSON 覆盖。",
         jsonOverrides: "JSON 覆盖（可选）",
         jsonOverridesHint: "这属于高级覆盖能力。默认复刻不会依赖 JSON。只有当你想手动修正关键词、结构提示或文案槽位时，再粘贴 JSON 覆盖。",
         referenceLayoutOverride: "参考图分析 JSON",
@@ -110,7 +132,7 @@ function copyFor(language: UiLanguage) {
         referenceExtraPromptHint: "只写你想额外强调的视觉要求，比如“保持绿色顶部横幅”“突出右侧包装箱”。",
         referenceNegativePromptHint: "只写你想额外避免的内容，比如“不要改成厨房场景”“不要改成英文标题”。",
         livePreview: "实时预览",
-        livePreviewEmpty: "上传商品图后，这里会实时显示预览。",
+        livePreviewEmpty: "上传图片后，这里会实时显示预览。",
         referencePreviewEmpty: "开启参考图复刻模式后，上传参考图，这里会显示参考画面预览。",
         previousImage: "上一张",
         nextImage: "下一张",
@@ -134,7 +156,7 @@ function copyFor(language: UiLanguage) {
         templatePickerLabel: "当前图片类型模板",
         templateFallback: "未命中模板，将回退到内置默认策略。",
         wildcard: "全部适用",
-        productName: "商品名",
+        productName: "图片名",
         sku: "SKU",
         brandName: "品牌名",
         category: "品类",
@@ -145,7 +167,7 @@ function copyFor(language: UiLanguage) {
         autoLanguageToggle: "跟随国家自动切换语言",
         autoLanguageHint: "开启后，切换国家时会自动带出该市场默认语言。",
         outputLanguage: "输出语言",
-        outputLanguageHint: "生成前会自动把文案翻译成当前输出语言；提示词模式下会翻译你填写的提示词和负向提示词。",
+        outputLanguageHint: "生成前会自动把文案翻译成当前输出语言；提示词模式下你可以分别控制“是否先翻译提示词”和“是否继续做真实照片优化”。",
         promptMarketToggle: "自定义目标市场参数（可选）",
         promptMarketToggleHint: "默认沿用当前提示词模式的市场与语言参数；只有在你需要指定国家、语言或平台时再展开。",
         platform: "平台",
@@ -155,7 +177,6 @@ function copyFor(language: UiLanguage) {
         resolutions: "分辨率",
         variants: "每种类型生成数量",
         remakeVariants: "图片数量",
-        includeLayout: "同时生成文案排版图",
         applyRecommendation: "一键推荐参数",
         recommendationApplied: "已应用推荐参数",
         clearDraft: "清空已填信息",
@@ -163,7 +184,7 @@ function copyFor(language: UiLanguage) {
         clearAdvancedInfo: "清空临时配置",
         leavePrompt: "当前有未提交的创作草稿，离开页面后本次上传的图片需要重新选择。确认离开吗？",
         submitSuccessTitle: "任务已创建成功",
-        submitSuccessHint: "你可以继续创建下一条商品任务，或立即查看本次结果页。",
+        submitSuccessHint: "你可以继续创建下一条图片任务，或立即查看本次结果页。",
         continueCreate: "继续创建下一条",
         viewResults: "查看结果页",
         temporaryApiKey: "临时 API Key（可选）",
@@ -177,11 +198,11 @@ function copyFor(language: UiLanguage) {
         requestCountSummary: "本次将发起 {count} 次图像请求。",
         requestCountBreakdown: "计算方式：输入 {sources} × 类型 {types} × 比例 {ratios} × 分辨率 {resolutions} × 数量 {variants}。",
         multiTypeBillingHint: "当前选择了多个图片类型。系统会分别调用模型并分别计费，不是同一种图的多张变体。",
-        filesRequired: "请至少上传一张商品图。",
+        filesRequired: "请至少上传一张图片。",
         promptRequired: "提示词模式下，请填写自定义提示词。",
         referenceFilesRequired: "参考图复刻模式下，请至少上传一张参考图。",
         generateError: "提交失败，请检查表单和 API Key。",
-        baseSummaryEmpty: "填写商品信息、卖点与限制词。",
+        baseSummaryEmpty: "填写图片信息、卖点与限制词。",
         advancedSummaryEmpty: "可选的临时密钥与额外配置。",
         temporaryApiKeySet: "已填写高级配置",
         promptPrefillApplied: "已从结果页回填复刻 prompt 到高级提示词，请重新上传图片后再提交。",
@@ -195,9 +216,9 @@ function copyFor(language: UiLanguage) {
         sourceImagesExpand: "Expand source images (optional)",
         sourceImagesCollapse: "Collapse source images",
         referenceImages: "Reference images",
-        referenceHint: "Upload one or more reference images. The system will reuse the overall composition and replace the subject with your product.",
+        referenceHint: "Upload one reference image. The system treats it as the master, replaces only the source subject plus related elements, and keeps the original reference copy by default. Switch to copy-sheet mode if text should change.",
         creationMode: "Creation mode",
-        creationModeHint: "Standard mode optimizes from the product source image. Image set mode creates a fixed six-image product set. Amazon A+ mode creates a fixed A+ detail module set. Prompt mode lets you write the image prompt yourself. Reference remake also reads reference images and recreates the whole visual structure.",
+        creationModeHint: "Standard mode optimizes from the product source image. Image set mode creates a fixed six-image product set. Amazon A+ mode creates a fixed A+ detail module set. Prompt mode lets you write the image prompt yourself. Reference remake directly restores the reference image with your source subject.",
         standardMode: "Standard",
         promptMode: "Prompt mode",
         referenceMode: "Reference remake",
@@ -205,9 +226,12 @@ function copyFor(language: UiLanguage) {
         customPromptHint: "Describe the desired scene, style, background, lighting, composition, and detail requirements directly.",
         customNegativePrompt: "Negative prompt",
         customNegativePromptHint: "Add anything you want to avoid, such as “no hands”, “no English text”, or “no kitchen background”.",
+        translatePromptToOutputLanguage: "Translate to output language",
+        translatePromptToOutputLanguageHint:
+          "When enabled, the system translates your prompt and negative prompt into the selected output language first. When disabled, it keeps your original wording.",
         autoOptimizePrompt: "Optimize for realistic photos",
         autoOptimizePromptHint:
-          "When enabled, the system rewrites your prompt into a more realistic photo-oriented brief, prioritizing natural lighting, believable camera language, material detail, real shadows, and commercial photography quality. When disabled, it follows your wording as directly as possible.",
+          "When enabled, the system further rewrites the current prompt into a more realistic photo-oriented brief, prioritizing natural lighting, believable camera language, material detail, real shadows, and commercial photography quality.",
         promptModePanelHint: "Prompt mode does not use template matching. The system primarily follows your text prompt.",
         promptOptionalContext: "Add optional product context",
         promptOptionalContextHint: "If you only want to generate directly from your prompt, you can leave all fields below empty.",
@@ -215,10 +239,19 @@ function copyFor(language: UiLanguage) {
         referenceStrengthHint: "Control whether the result stays closer to the reference image or preserves more of the original product scene logic.",
         preserveReferenceText: "Preserve reference text and font feel when possible",
         preserveReferenceTextHint: "When enabled, the model prioritizes keeping the reference poster's original wording, typography feel, outlined text style, and text block positions instead of rewriting fresh copy.",
+        referenceCopyMode: "Copy source",
+        referenceCopyModeHint: "The reference image stays the master. This only decides which source should drive the text that must change.",
+        referenceCopyModeReference: "Follow reference text",
+        referenceCopyModeReferenceHint: "Default. Keep the original reference wording whenever possible and only make the smallest required changes after subject replacement.",
+        referenceCopyModeCopySheet: "Use copy sheet",
+        referenceCopyModeCopySheetHint: "Keep the reference text layout, typography feel, and block positions, but rewrite changed copy from the fields below. Missing fields fall back to source-image inference.",
+        referenceCopySheetFields: "Copy sheet (optional)",
+        referenceCopySheetFieldsHint: "These fields are used only in copy-sheet mode. Blank fields fall back to source-image understanding.",
+        referenceSingleHint: "Only the first reference image is used.",
         strengthReference: "Closer to reference",
         strengthBalanced: "Balanced",
         strengthProduct: "Closer to product scene",
-        remakeSimplifiedHint: "Reference remake now uses a direct poster-remake flow: it tries to keep the reference composition, banner bars, typography feel, and packaging relationship. You only need ratio, resolution, and quantity.",
+        remakeSimplifiedHint: "Strictly restore the reference image and replace only the subject plus directly related elements. Reference remake keeps only ratio, resolution, and quantity, and ignores market parameters, templates, remake strength, and JSON overrides.",
         jsonOverrides: "JSON overrides (optional)",
         jsonOverridesHint: "This is an advanced override. The default remake flow does not depend on JSON. Only use it when you explicitly want to override keywords, structure hints, or poster copy slots.",
         referenceLayoutOverride: "Reference layout JSON",
@@ -266,7 +299,7 @@ function copyFor(language: UiLanguage) {
         autoLanguageToggle: "Follow country for language",
         autoLanguageHint: "When enabled, changing country will automatically switch to that market's default language.",
         outputLanguage: "Output language",
-        outputLanguageHint: "Before generation, copy is auto-translated into the current output language. In prompt mode, your prompt and negative prompt are translated as well.",
+        outputLanguageHint: "Before generation, copy is auto-translated into the current output language. In prompt mode, you can control prompt translation and realistic-photo optimization separately.",
         promptMarketToggle: "Customize target market settings (optional)",
         promptMarketToggleHint: "Prompt mode uses the current default market and language settings unless you explicitly expand and override them.",
         platform: "Platform",
@@ -276,7 +309,6 @@ function copyFor(language: UiLanguage) {
         resolutions: "Resolutions",
         variants: "Variants per type",
         remakeVariants: "Image count",
-        includeLayout: "Generate layout creative too",
         applyRecommendation: "Recommend setup",
         recommendationApplied: "Recommendation applied",
         clearDraft: "Clear draft",
@@ -325,7 +357,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
   const suiteModeLabel = language === "zh" ? "套图模式" : "Image set mode";
   const suiteModeHint =
     language === "zh"
-      ? "上传主图后，系统会自动生成一整套通用商品套图：主图、生活方式、卖点总览、场景图、材质工艺和尺寸参数。"
+      ? "上传主图后，系统会自动生成一整套通用图片套图：主图、生活方式、卖点总览、场景图、材质工艺和尺寸参数。"
       : "Upload a source image and the system will generate a full generic image set: main image, lifestyle, feature overview, scene, material & craft, and size spec.";
   const suiteModulesSummary =
     language === "zh"
@@ -378,10 +410,17 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
   const [payload, setPayload] = useState(INITIAL_PAYLOAD);
   const [draftReady, setDraftReady] = useState(false);
   const [submittedJobId, setSubmittedJobId] = useState<string | null>(null);
+  const [submitBlockedFeedback, setSubmitBlockedFeedback] = useState(false);
   const allowLeaveRef = useRef(false);
   const formRef = useRef<HTMLFormElement | null>(null);
+  const sourceFileInputRef = useRef<HTMLInputElement | null>(null);
+  const referenceFileInputRef = useRef<HTMLInputElement | null>(null);
   const productNameInputRef = useRef<HTMLInputElement | null>(null);
   const customPromptInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const suiteSellingPointsInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const suiteMaterialInfoInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const suiteSizeInfoInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const submitBlockedTimerRef = useRef<number | null>(null);
   const [viewportLayout, setViewportLayout] = useState({
     compact: false,
     cramped: false,
@@ -400,6 +439,68 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     return payloadChanged || typesChanged || ratiosChanged || resolutionsChanged || hasTemplateOverride || hasImages || promptMarketChanged;
   }, [files.length, payload, promptMarketOverridesEnabled, referenceFiles.length, selectedRatios, selectedResolutions, selectedTemplateOverrides, selectedTypes]);
   const shouldWarnBeforeLeave = hasDraftChanges && !submittedJobId;
+  const submitBlockReason = useMemo<SubmitBlockReason | null>(() => {
+    if (isPending) {
+      return null;
+    }
+
+    if (payload.creationMode !== "prompt" && !files.length) {
+      return "files";
+    }
+
+    if (payload.creationMode === "prompt" && !payload.customPrompt.trim()) {
+      return "prompt";
+    }
+
+    if (payload.creationMode === "reference-remix" && !referenceFiles.length) {
+      return "reference";
+    }
+
+    if (payload.creationMode === "standard" && !payload.productName.trim()) {
+      return "product-name";
+    }
+
+    if (payload.creationMode === "suite" && !payload.sellingPoints.trim()) {
+      return "suite-selling-points";
+    }
+
+    if (payload.creationMode === "suite" && !payload.materialInfo.trim()) {
+      return "suite-material";
+    }
+
+    if (payload.creationMode === "suite" && !payload.sizeInfo.trim()) {
+      return "suite-size";
+    }
+
+    return null;
+  }, [
+    files.length,
+    isPending,
+    payload.creationMode,
+    payload.customPrompt,
+    payload.materialInfo,
+    payload.productName,
+    payload.sellingPoints,
+    payload.sizeInfo,
+    referenceFiles.length,
+  ]);
+  const submitBlockedMessage =
+    submitBlockReason === "files"
+      ? text.filesRequired
+      : submitBlockReason === "prompt"
+        ? text.promptRequired
+        : submitBlockReason === "reference"
+          ? text.referenceFilesRequired
+          : submitBlockReason === "suite-selling-points" ||
+              submitBlockReason === "suite-material" ||
+              submitBlockReason === "suite-size"
+            ? suiteModeRequiredHint
+            : submitBlockReason === "product-name"
+              ? language === "zh"
+                ? "请先填写图片名。"
+                : "Please fill in the image name first."
+              : "";
+  const isSubmitBlocked = Boolean(submitBlockReason);
 
   useEffect(() => {
     try {
@@ -449,53 +550,21 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
         setRecommendationMessage(draft.recommendationMessage);
       }
 
-      const rawPrefill = window.localStorage.getItem(CREATE_JOB_PROMPT_PREFILL_KEY);
-      if (rawPrefill) {
-        const prefill = JSON.parse(rawPrefill) as {
-          promptText?: string;
-          customNegativePrompt?: string;
-          productName?: string;
-          brandName?: string;
-          category?: string;
-          country?: string;
-          language?: string;
-          platform?: string;
-          ratio?: string;
-          resolution?: string;
-          creationMode?: "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
-          referenceStrength?: "reference" | "balanced" | "product";
-        };
-
-        setPayload((current) => ({
-          ...current,
-          creationMode: prefill.creationMode ?? "reference-remix",
-          referenceStrength: prefill.referenceStrength ?? current.referenceStrength,
-          productName: prefill.productName || current.productName,
-          brandName: prefill.brandName || current.brandName,
-          category: prefill.category || current.category,
-          country: prefill.country || current.country,
-          language: prefill.language || current.language,
-          platform: prefill.platform || current.platform,
-          referenceExtraPrompt: prefill.promptText || current.referenceExtraPrompt,
-          customNegativePrompt: prefill.customNegativePrompt || current.customNegativePrompt,
-        }));
-
-        if (prefill.ratio) {
-          setSelectedRatios([prefill.ratio]);
-        }
-        if (prefill.resolution) {
-          setSelectedResolutions([prefill.resolution === "512px" ? "0.5K" : prefill.resolution]);
-        }
-        setOpenSections((current) => ({ ...current, advanced: true, base: true }));
-        setRecommendationMessage(text.promptPrefillApplied);
-        window.localStorage.removeItem(CREATE_JOB_PROMPT_PREFILL_KEY);
-      }
     } catch {
       window.localStorage.removeItem(CREATE_JOB_DRAFT_KEY);
     } finally {
       setDraftReady(true);
     }
   }, []);
+
+  useEffect(
+    () => () => {
+      if (submitBlockedTimerRef.current) {
+        window.clearTimeout(submitBlockedTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!draftReady) {
@@ -735,7 +804,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
       setSelectedTemplateOverrides({});
     }
 
-    if (!selectedResolutions.length) {
+      if (!selectedResolutions.length) {
       setSelectedResolutions(["4K"]);
     }
 
@@ -764,10 +833,38 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
         next.platform = referenceDefaults.platform;
         changed = true;
       }
+      if (current.referenceStrength !== "reference") {
+        next.referenceStrength = "reference";
+        changed = true;
+      }
+      if (!current.preserveReferenceText) {
+        next.preserveReferenceText = true;
+        changed = true;
+      }
+      if (current.referenceCopyMode !== "reference" && current.referenceCopyMode !== "copy-sheet") {
+        next.referenceCopyMode = "reference";
+        changed = true;
+      }
+      if (current.referenceExtraPrompt) {
+        next.referenceExtraPrompt = "";
+        changed = true;
+      }
+      if (current.referenceNegativePrompt) {
+        next.referenceNegativePrompt = "";
+        changed = true;
+      }
+      if (current.referenceLayoutOverrideJson) {
+        next.referenceLayoutOverrideJson = "";
+        changed = true;
+      }
+      if (current.referencePosterCopyOverrideJson) {
+        next.referencePosterCopyOverrideJson = "";
+        changed = true;
+      }
 
       return changed ? next : current;
     });
-  }, [language, payload.creationMode, payload.includeCopyLayout, selectedResolutions, selectedTemplateOverrides, selectedTypes]);
+  }, [language, payload.creationMode, selectedResolutions, selectedTemplateOverrides, selectedTypes]);
 
   useEffect(() => {
     if (payload.creationMode !== "prompt") {
@@ -779,17 +876,15 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     }
 
     const nextCountry = getDefaultCountryForLanguage(payload.language);
-    if (payload.includeCopyLayout || (nextCountry && payload.country !== nextCountry)) {
+    if (nextCountry && payload.country !== nextCountry) {
       setPayload((current) => ({
         ...current,
-        includeCopyLayout: false,
         country: getDefaultCountryForLanguage(current.language) ?? current.country,
       }));
     }
   }, [
     payload.country,
     payload.creationMode,
-    payload.includeCopyLayout,
     payload.language,
     selectedTemplateOverrides,
   ]);
@@ -836,14 +931,6 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     setPreviewIndex((current) => (current === previewUrls.length - 1 ? 0 : current + 1));
   }
 
-  function showPreviousReferencePreview() {
-    setReferencePreviewIndex((current) => (current === 0 ? referencePreviewUrls.length - 1 : current - 1));
-  }
-
-  function showNextReferencePreview() {
-    setReferencePreviewIndex((current) => (current === referencePreviewUrls.length - 1 ? 0 : current + 1));
-  }
-
   function toggleSection(section: keyof typeof openSections) {
     setOpenSections((current) => ({
       ...current,
@@ -867,7 +954,6 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     setPayload((current) => ({
       ...current,
       variantsPerType: recommendation.variantsPerType,
-      includeCopyLayout: recommendation.includeCopyLayout,
     }));
     setRecommendationMessage(`${text.recommendationApplied} · ${recommendation.reason[language]}`);
   }
@@ -958,53 +1044,87 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
     }, 0);
   }
 
+  function focusBlockedSubmitTarget(reason: SubmitBlockReason) {
+    if (reason === "files") {
+      sourceFileInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      sourceFileInputRef.current?.focus();
+      return;
+    }
+
+    if (reason === "reference") {
+      referenceFileInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      referenceFileInputRef.current?.focus();
+      return;
+    }
+
+    setOpenSections((current) => ({ ...current, base: true }));
+
+    window.setTimeout(() => {
+      if (reason === "prompt") {
+        customPromptInputRef.current?.focus();
+        customPromptInputRef.current?.select();
+        return;
+      }
+
+      if (reason === "suite-selling-points") {
+        suiteSellingPointsInputRef.current?.focus();
+        suiteSellingPointsInputRef.current?.select();
+        return;
+      }
+
+      if (reason === "suite-material") {
+        suiteMaterialInfoInputRef.current?.focus();
+        suiteMaterialInfoInputRef.current?.select();
+        return;
+      }
+
+      if (reason === "suite-size") {
+        suiteSizeInfoInputRef.current?.focus();
+        suiteSizeInfoInputRef.current?.select();
+        return;
+      }
+
+      productNameInputRef.current?.focus();
+      productNameInputRef.current?.select();
+    }, 0);
+  }
+
+  function triggerSubmitBlockedFeedback(reason: SubmitBlockReason) {
+    setErrorMessage(
+      reason === "files"
+        ? text.filesRequired
+        : reason === "prompt"
+          ? text.promptRequired
+          : reason === "reference"
+            ? text.referenceFilesRequired
+            : reason === "product-name"
+              ? language === "zh"
+                ? "请先填写图片名。"
+                : "Please fill in the image name first."
+              : suiteModeRequiredHint,
+    );
+    setSubmitBlockedFeedback(false);
+    window.clearTimeout(submitBlockedTimerRef.current ?? undefined);
+    window.requestAnimationFrame(() => {
+      setSubmitBlockedFeedback(true);
+      submitBlockedTimerRef.current = window.setTimeout(() => {
+        setSubmitBlockedFeedback(false);
+      }, 460);
+    });
+    focusBlockedSubmitTarget(reason);
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setErrorMessage("");
 
-    if (payload.creationMode !== "prompt" && !files.length) {
-      setErrorMessage(text.filesRequired);
-      return;
-    }
-
-    if (payload.creationMode === "prompt" && !payload.customPrompt.trim()) {
-      setErrorMessage(text.promptRequired);
-      return;
-    }
-
-    if (payload.creationMode === "reference-remix" && !referenceFiles.length) {
-      setErrorMessage(text.referenceFilesRequired);
-      return;
-    }
-
-    if (
-      payload.creationMode === "suite" &&
-      (!payload.category.trim() || !payload.sellingPoints.trim() || !payload.materialInfo.trim() || !payload.sizeInfo.trim())
-    ) {
-      setErrorMessage(suiteModeRequiredHint);
+    if (submitBlockReason) {
+      triggerSubmitBlockedFeedback(submitBlockReason);
       return;
     }
 
     let referenceLayoutOverride: unknown = null;
     let referencePosterCopyOverride: unknown = null;
-
-    if (payload.creationMode === "reference-remix" && payload.referenceLayoutOverrideJson.trim()) {
-      try {
-        referenceLayoutOverride = JSON.parse(payload.referenceLayoutOverrideJson);
-      } catch {
-        setErrorMessage(text.invalidReferenceLayoutJson);
-        return;
-      }
-    }
-
-    if (payload.creationMode === "reference-remix" && payload.referencePosterCopyOverrideJson.trim()) {
-      try {
-        referencePosterCopyOverride = JSON.parse(payload.referencePosterCopyOverrideJson);
-      } catch {
-        setErrorMessage(text.invalidReferencePosterCopyJson);
-        return;
-      }
-    }
 
     startTransition(async () => {
       try {
@@ -1025,8 +1145,18 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
             selectedRatios,
             selectedResolutions,
             selectedTemplateOverrides,
-            referenceLayoutOverride,
-            referencePosterCopyOverride,
+            referenceStrength: payload.creationMode === "reference-remix" ? "reference" : payload.referenceStrength,
+            preserveReferenceText: payload.creationMode === "reference-remix" ? true : payload.preserveReferenceText,
+            referenceCopyMode:
+              payload.creationMode === "reference-remix"
+                ? payload.referenceCopyMode === "copy-sheet"
+                  ? "copy-sheet"
+                  : "reference"
+                : payload.referenceCopyMode,
+            referenceExtraPrompt: payload.creationMode === "reference-remix" ? "" : payload.referenceExtraPrompt,
+            referenceNegativePrompt: payload.creationMode === "reference-remix" ? "" : payload.referenceNegativePrompt,
+            referenceLayoutOverride: payload.creationMode === "reference-remix" ? null : referenceLayoutOverride,
+            referencePosterCopyOverride: payload.creationMode === "reference-remix" ? null : referencePosterCopyOverride,
             temporaryProvider: {
               apiKey: payload.temporaryApiKey,
               apiBaseUrl: payload.temporaryApiBaseUrl,
@@ -1113,13 +1243,15 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
   const currentReferencePreviewUrl = referencePreviewUrls[referencePreviewIndex] ?? null;
   const resolutionOptions = RESOLUTIONS;
   const effectiveSelectedTypes =
-    payload.creationMode === "prompt"
+    payload.creationMode === "prompt" || payload.creationMode === "reference-remix"
       ? ["scene"]
       : payload.creationMode === "suite"
         ? SUITE_SELECTED_TYPES
         : payload.creationMode === "amazon-a-plus"
           ? AMAZON_A_PLUS_SELECTED_TYPES
           : selectedTypes;
+  const referenceCopyModeLabel =
+    payload.referenceCopyMode === "copy-sheet" ? text.referenceCopyModeCopySheet : text.referenceCopyModeReference;
   const generationHint =
     payload.creationMode === "prompt"
       ? text.promptModePanelHint
@@ -1138,25 +1270,12 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
       : payload.creationMode === "amazon-a-plus"
         ? [payload.productName, payload.brandName, payload.sellingPoints].filter(Boolean).join(" · ") || amazonAPlusContextHint
       : payload.creationMode === "reference-remix"
-        ? [
-            payload.referenceStrength === "reference"
-              ? text.strengthReference
-              : payload.referenceStrength === "product"
-                ? text.strengthProduct
-                : text.strengthBalanced,
-            payload.preserveReferenceText ? text.preserveReferenceText : null,
-          ]
-            .filter(Boolean)
-            .join(" · ") || text.baseSummaryEmpty
+        ? [text.remakeSimplifiedHint, `${text.referenceCopyMode}：${referenceCopyModeLabel}`].join(" ")
         : [payload.productName, payload.brandName, labelFor(payload.category, language, PRODUCT_CATEGORIES)].filter(Boolean).join(" · ") || text.baseSummaryEmpty;
   const marketSummary =
     payload.creationMode === "reference-remix"
       ? [
-          payload.referenceStrength === "reference"
-            ? text.strengthReference
-            : payload.referenceStrength === "product"
-              ? text.strengthProduct
-              : text.strengthBalanced,
+          referenceCopyModeLabel,
           selectedRatios[0] ?? "-",
           selectedResolutions[0] ?? "-",
           `${payload.variantsPerType}`,
@@ -1260,7 +1379,13 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   ) : null}
                 </div>
               </div>
-              <input multiple accept="image/*" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} type="file" />
+              <input
+                ref={sourceFileInputRef}
+                multiple
+                accept="image/*"
+                onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+                type="file"
+              />
               <div className="split-header compact preview-header-row">
                 <h3>{text.livePreview}</h3>
                 <span className="helper">{text.keyboardHint}</span>
@@ -1268,7 +1393,12 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
               {currentPreviewUrl ? (
                 <>
                   <div className="preview-stage">
-                    <img alt={files[previewIndex]?.name || text.livePreview} className="preview-stage-image" src={currentPreviewUrl} />
+                    <img
+                      alt={files[previewIndex]?.name || text.livePreview}
+                      className="preview-stage-image"
+                      decoding="async"
+                      src={currentPreviewUrl}
+                    />
                     {previewUrls.length > 1 ? (
                       <>
                         <button aria-label={text.previousImage} className="preview-arrow preview-arrow-left" onClick={showPreviousPreview} type="button">
@@ -1290,7 +1420,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                           onClick={() => setPreviewIndex(index)}
                           type="button"
                         >
-                          <img alt={files[index]?.name || text.livePreview} src={url} />
+                          <img alt={files[index]?.name || text.livePreview} decoding="async" loading="lazy" src={url} />
                         </button>
                       ))}
                     </div>
@@ -1309,20 +1439,14 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   <div>
                     <h2>{text.referenceImages}</h2>
                     <p className="helper">{text.referenceHint}</p>
-                    {!!referenceFiles.length && <p className="helper">{referenceFiles.length} file(s) selected</p>}
+                    <p className="helper">{text.referenceSingleHint}</p>
+                    {!!referenceFiles.length && <p className="helper">{referenceFiles[0]?.name}</p>}
                   </div>
-                  {referenceFiles.length ? (
-                    <span className="helper">
-                      {text.imageCounter
-                        .replace("{current}", String(referencePreviewIndex + 1))
-                        .replace("{total}", String(referenceFiles.length))}
-                    </span>
-                  ) : null}
                 </div>
                 <input
-                  multiple
+                  ref={referenceFileInputRef}
                   accept="image/*"
-                  onChange={(event) => setReferenceFiles(Array.from(event.target.files ?? []))}
+                  onChange={(event) => setReferenceFiles(Array.from(event.target.files ?? []).slice(0, 1))}
                   type="file"
                 />
                 {currentReferencePreviewUrl ? (
@@ -1331,44 +1455,10 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                       <img
                         alt={referenceFiles[referencePreviewIndex]?.name || text.referenceImages}
                         className="preview-stage-image"
+                        decoding="async"
                         src={currentReferencePreviewUrl}
                       />
-                      {referencePreviewUrls.length > 1 ? (
-                        <>
-                          <button
-                            aria-label={text.previousImage}
-                            className="preview-arrow preview-arrow-left"
-                            onClick={showPreviousReferencePreview}
-                            type="button"
-                          >
-                            ‹
-                          </button>
-                          <button
-                            aria-label={text.nextImage}
-                            className="preview-arrow preview-arrow-right"
-                            onClick={showNextReferencePreview}
-                            type="button"
-                          >
-                            ›
-                          </button>
-                        </>
-                      ) : null}
                     </div>
-                    {referencePreviewUrls.length > 1 ? (
-                      <div className="preview-thumb-row" role="tablist" aria-label={text.referenceImages}>
-                        {referencePreviewUrls.map((url, index) => (
-                          <button
-                            aria-label={referenceFiles[index]?.name || `${text.referenceImages} ${index + 1}`}
-                            className={index === referencePreviewIndex ? "preview-thumb is-active" : "preview-thumb"}
-                            key={`${referenceFiles[index]?.name || "reference"}-${index}`}
-                            onClick={() => setReferencePreviewIndex(index)}
-                            type="button"
-                          >
-                            <img alt={referenceFiles[index]?.name || text.referenceImages} src={url} />
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
                   </>
                 ) : (
                   <div className="preview-stage preview-stage-empty">
@@ -1489,7 +1579,20 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
               <button className="ghost-button" onClick={clearDraft} type="button">
                 {text.clearDraft}
               </button>
-              <button className="primary-button" disabled={isPending} type="submit">
+              <button
+                aria-disabled={isPending || isSubmitBlocked}
+                className={[
+                  "primary-button",
+                  isSubmitBlocked ? "is-blocked" : "",
+                  submitBlockedFeedback ? "is-shaking" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                disabled={isPending}
+                onClick={isSubmitBlocked ? () => triggerSubmitBlockedFeedback(submitBlockReason!) : undefined}
+                title={isSubmitBlocked ? submitBlockedMessage : undefined}
+                type={isSubmitBlocked ? "button" : "submit"}
+              >
                 {isPending ? text.submitting : text.submit}
               </button>
             </div>
@@ -1521,7 +1624,7 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
             <div className="accordion-body">
               <fieldset>
                 <legend>{text.creationMode}</legend>
-                <div className="chip-grid small">
+                <div className="chip-grid small creation-mode-grid">
                   <label className={payload.creationMode === "standard" ? "chip is-active" : "chip"}>
                     <input
                       checked={payload.creationMode === "standard"}
@@ -1576,57 +1679,6 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                       : text.creationModeHint}
                 </p>
               </fieldset>
-              {payload.creationMode === "reference-remix" ? (
-                <>
-                  <fieldset>
-                    <legend>{text.referenceStrength}</legend>
-                    <div className="chip-grid small">
-                      <label className={payload.referenceStrength === "reference" ? "chip is-active" : "chip"}>
-                        <input
-                          checked={payload.referenceStrength === "reference"}
-                          name="reference-strength"
-                          onChange={() => setPayload((current) => ({ ...current, referenceStrength: "reference" }))}
-                          type="radio"
-                        />
-                        <span>{text.strengthReference}</span>
-                      </label>
-                      <label className={payload.referenceStrength === "balanced" ? "chip is-active" : "chip"}>
-                        <input
-                          checked={payload.referenceStrength === "balanced"}
-                          name="reference-strength"
-                          onChange={() => setPayload((current) => ({ ...current, referenceStrength: "balanced" }))}
-                          type="radio"
-                        />
-                        <span>{text.strengthBalanced}</span>
-                      </label>
-                      <label className={payload.referenceStrength === "product" ? "chip is-active" : "chip"}>
-                        <input
-                          checked={payload.referenceStrength === "product"}
-                          name="reference-strength"
-                          onChange={() => setPayload((current) => ({ ...current, referenceStrength: "product" }))}
-                          type="radio"
-                        />
-                        <span>{text.strengthProduct}</span>
-                      </label>
-                    </div>
-                    <p className="helper inline-helper">{text.referenceStrengthHint}</p>
-                  </fieldset>
-                  <label className="checkbox-row helper-toggle-row">
-                    <input
-                      checked={payload.preserveReferenceText}
-                      type="checkbox"
-                      onChange={(event) =>
-                        setPayload((current) => ({
-                          ...current,
-                          preserveReferenceText: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span>{text.preserveReferenceText}</span>
-                  </label>
-                  <p className="helper inline-helper">{text.preserveReferenceTextHint}</p>
-                </>
-              ) : null}
               {payload.creationMode === "prompt" ? (
                 <>
                   <label>
@@ -1654,6 +1706,20 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     />
                     <small className="helper">{text.customNegativePromptHint}</small>
                   </label>
+                  <label className="checkbox-row helper-toggle-row">
+                    <input
+                      checked={payload.translatePromptToOutputLanguage}
+                      type="checkbox"
+                      onChange={(event) =>
+                        setPayload((current) => ({
+                          ...current,
+                          translatePromptToOutputLanguage: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>{text.translatePromptToOutputLanguage}</span>
+                  </label>
+                  <p className="helper inline-helper">{text.translatePromptToOutputLanguageHint}</p>
                   <label className="checkbox-row helper-toggle-row">
                     <input
                       checked={payload.autoOptimizePrompt}
@@ -1707,15 +1773,30 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                   </label>
                   <label>
                     <span>{suiteSellingPointsLabel}</span>
-                    <textarea rows={longRows} value={payload.sellingPoints} onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })} />
+                    <textarea
+                      ref={suiteSellingPointsInputRef}
+                      rows={longRows}
+                      value={payload.sellingPoints}
+                      onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })}
+                    />
                   </label>
                   <label>
                     <span>{suiteMaterialLabel}</span>
-                    <textarea rows={mediumRows} value={payload.materialInfo} onChange={(event) => setPayload({ ...payload, materialInfo: event.target.value })} />
+                    <textarea
+                      ref={suiteMaterialInfoInputRef}
+                      rows={mediumRows}
+                      value={payload.materialInfo}
+                      onChange={(event) => setPayload({ ...payload, materialInfo: event.target.value })}
+                    />
                   </label>
                   <label>
                     <span>{suiteSizeLabel}</span>
-                    <textarea rows={mediumRows} value={payload.sizeInfo} onChange={(event) => setPayload({ ...payload, sizeInfo: event.target.value })} />
+                    <textarea
+                      ref={suiteSizeInfoInputRef}
+                      rows={mediumRows}
+                      value={payload.sizeInfo}
+                      onChange={(event) => setPayload({ ...payload, sizeInfo: event.target.value })}
+                    />
                   </label>
                   <label>
                     <span>{text.sourceDescription}</span>
@@ -1816,6 +1897,78 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                     <span>{text.sourceDescription}</span>
                     <textarea rows={mediumRows} value={payload.sourceDescription} onChange={(event) => setPayload({ ...payload, sourceDescription: event.target.value })} />
                   </label>
+                </>
+              ) : null}
+              {payload.creationMode === "reference-remix" ? (
+                <>
+                  <fieldset>
+                    <legend>{text.referenceCopyMode}</legend>
+                    <div className="chip-grid small">
+                      <label className={payload.referenceCopyMode === "reference" ? "chip is-active" : "chip"}>
+                        <input
+                          checked={payload.referenceCopyMode === "reference"}
+                          name="reference-copy-mode"
+                          onChange={() => setPayload((current) => ({ ...current, referenceCopyMode: "reference" }))}
+                          type="radio"
+                        />
+                        <span>{text.referenceCopyModeReference}</span>
+                      </label>
+                      <label className={payload.referenceCopyMode === "copy-sheet" ? "chip is-active" : "chip"}>
+                        <input
+                          checked={payload.referenceCopyMode === "copy-sheet"}
+                          name="reference-copy-mode"
+                          onChange={() => setPayload((current) => ({ ...current, referenceCopyMode: "copy-sheet" }))}
+                          type="radio"
+                        />
+                        <span>{text.referenceCopyModeCopySheet}</span>
+                      </label>
+                    </div>
+                    <p className="helper inline-helper">{text.referenceCopyModeHint}</p>
+                    <p className="helper inline-helper">
+                      {payload.referenceCopyMode === "copy-sheet"
+                        ? text.referenceCopyModeCopySheetHint
+                        : text.referenceCopyModeReferenceHint}
+                    </p>
+                  </fieldset>
+                  {payload.referenceCopyMode === "copy-sheet" ? (
+                    <>
+                      <div className="split-header compact">
+                        <div>
+                          <h3>{text.referenceCopySheetFields}</h3>
+                          <p className="helper">{text.referenceCopySheetFieldsHint}</p>
+                        </div>
+                      </div>
+                      <label>
+                        <span>{text.productName}</span>
+                        <input
+                          ref={productNameInputRef}
+                          value={payload.productName}
+                          onChange={(event) => setPayload({ ...payload, productName: event.target.value })}
+                        />
+                      </label>
+                      <label>
+                        <span>{text.brandName}</span>
+                        <input
+                          list="brand-library-options"
+                          value={payload.brandName}
+                          onChange={(event) => setPayload({ ...payload, brandName: event.target.value })}
+                        />
+                        <datalist id="brand-library-options">
+                          {brands.map((brand) => (
+                            <option key={brand.id} value={brand.name} />
+                          ))}
+                        </datalist>
+                      </label>
+                      <label>
+                        <span>{text.sellingPoints}</span>
+                        <textarea rows={longRows} value={payload.sellingPoints} onChange={(event) => setPayload({ ...payload, sellingPoints: event.target.value })} />
+                      </label>
+                      <label>
+                        <span>{text.sourceDescription}</span>
+                        <textarea rows={mediumRows} value={payload.sourceDescription} onChange={(event) => setPayload({ ...payload, sourceDescription: event.target.value })} />
+                      </label>
+                    </>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -2016,12 +2169,6 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
                 </span>
                 <input min={1} max={6} type="number" value={payload.variantsPerType} onChange={(event) => setPayload({ ...payload, variantsPerType: Number(event.target.value) || 1 })} />
               </label>
-              {payload.creationMode === "standard" ? (
-                <label className="checkbox-row">
-                  <input checked={payload.includeCopyLayout} type="checkbox" onChange={(event) => setPayload({ ...payload, includeCopyLayout: event.target.checked })} />
-                  <span>{text.includeLayout}</span>
-                </label>
-              ) : null}
               {payload.creationMode === "prompt" ? (
                 <>
                   <label className="checkbox-row helper-toggle-row">
@@ -2116,70 +2263,6 @@ export function CreateJobForm({ language }: { language: UiLanguage }) {
           </div>
           {openSections.advanced ? (
             <div className="accordion-body">
-              {payload.creationMode === "reference-remix" ? (
-                <>
-                  <label>
-                    <span>{text.referenceExtraPrompt}</span>
-                    <textarea
-                      rows={mediumRows}
-                      value={payload.referenceExtraPrompt}
-                      onChange={(event) =>
-                        setPayload((current) => ({
-                          ...current,
-                          referenceExtraPrompt: event.target.value,
-                        }))
-                      }
-                    />
-                    <small className="helper">{text.referenceExtraPromptHint}</small>
-                  </label>
-                  <label>
-                    <span>{text.referenceNegativePrompt}</span>
-                    <textarea
-                      rows={mediumRows}
-                      value={payload.referenceNegativePrompt}
-                      onChange={(event) =>
-                        setPayload((current) => ({
-                          ...current,
-                          referenceNegativePrompt: event.target.value,
-                        }))
-                      }
-                    />
-                    <small className="helper">{text.referenceNegativePromptHint}</small>
-                  </label>
-                  <fieldset>
-                    <legend>{text.jsonOverrides}</legend>
-                    <p className="helper inline-helper">{text.jsonOverridesHint}</p>
-                    <label>
-                      <span>{text.referenceLayoutOverride}</span>
-                      <textarea
-                        rows={jsonRows}
-                        placeholder={text.jsonOverridePlaceholder}
-                        value={payload.referenceLayoutOverrideJson}
-                        onChange={(event) =>
-                          setPayload((current) => ({
-                            ...current,
-                            referenceLayoutOverrideJson: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      <span>{text.referencePosterCopyOverride}</span>
-                      <textarea
-                        rows={posterJsonRows}
-                        placeholder={text.jsonOverridePlaceholder}
-                        value={payload.referencePosterCopyOverrideJson}
-                        onChange={(event) =>
-                          setPayload((current) => ({
-                            ...current,
-                            referencePosterCopyOverrideJson: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </fieldset>
-                </>
-              ) : null}
               <label>
                 <span>{text.temporaryApiKey}</span>
                 <input type="password" value={payload.temporaryApiKey} onChange={(event) => setPayload({ ...payload, temporaryApiKey: event.target.value })} />

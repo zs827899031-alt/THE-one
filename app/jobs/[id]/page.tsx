@@ -19,7 +19,8 @@ export default async function JobDetailsPage({
   }
 
   const language = await getUiLanguage();
-  const itemParam = typeof query.item === "string" ? query.item : null;
+  const itemParam =
+    typeof query.itemId === "string" ? query.itemId : typeof query.item === "string" ? query.item : null;
   const initialActiveItemId = itemParam && details.items.some((item) => item.id === itemParam) ? itemParam : null;
 
   return <JobDetailsClient initialDetails={details} language={language} initialActiveItemId={initialActiveItemId} />;

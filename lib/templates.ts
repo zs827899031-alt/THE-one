@@ -3,6 +3,7 @@ import type {
   BrandRecord,
   GeneratedCopyBundle,
   ImageType,
+  ReferenceCopyMode,
   ReferenceLayoutAnalysis,
   ReferencePosterCopy,
   TemplateRecord,
@@ -546,6 +547,14 @@ function nonEmptyList(values: string[]) {
   return values.filter((value) => value.trim().length > 0);
 }
 
+function splitCopySheetHighlights(value?: string | null, maxItems = 4) {
+  return (value ?? "")
+    .split(/[\n\r|,，；;]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
 export function buildReferenceRemakePrompt(input: {
   country: string;
   language: string;
@@ -639,71 +648,78 @@ export function buildReferenceDirectRemakePrompt(input: {
   resolutionLabel: string;
   referenceStrength: "reference" | "balanced" | "product";
   preserveReferenceText: boolean;
+  referenceCopyMode: ReferenceCopyMode;
   referenceExtraPrompt?: string;
   referenceNegativePrompt?: string;
   referenceLayoutHints?: ReferenceLayoutAnalysis | null;
   referencePosterCopyHints?: ReferencePosterCopy | null;
   promptVariant?: "strict" | "fallback";
 }) {
-  const strengthLines = strengthPrompt(input.referenceStrength);
-  const extraPrompt = input.referenceExtraPrompt?.trim();
-  const negativePrompt = input.referenceNegativePrompt?.trim();
-  const callouts = nonEmptyList(input.referencePosterCopyHints?.callouts ?? []);
-  const categoryKey = normalizePromptCategory(input.category);
-  const categoryLabel = categoryKey ? PRODUCT_CATEGORIES.find((item) => item.value === categoryKey)?.label.en ?? categoryKey : null;
-  const hintLines = [
-    input.referenceLayoutHints?.summary ? `Operator layout hint: ${input.referenceLayoutHints.summary}.` : null,
-    input.referenceLayoutHints?.backgroundType
-      ? `Operator background hint: ${input.referenceLayoutHints.backgroundType}.`
-      : null,
-    input.referenceLayoutHints?.primaryProductPlacement
-      ? `Operator placement hint: ${input.referenceLayoutHints.primaryProductPlacement}.`
-      : null,
-    input.referenceLayoutHints?.packagingPlacement
-      ? `Operator packaging hint: ${input.referenceLayoutHints.packagingPlacement}.`
-      : null,
-    input.referencePosterCopyHints?.topBanner ? `Operator top banner hint: ${input.referencePosterCopyHints.topBanner}.` : null,
-    input.referencePosterCopyHints?.headline ? `Operator headline hint: ${input.referencePosterCopyHints.headline}.` : null,
-    input.referencePosterCopyHints?.subheadline
-      ? `Operator subheadline hint: ${input.referencePosterCopyHints.subheadline}.`
-      : null,
-    input.referencePosterCopyHints?.bottomBanner
-      ? `Operator bottom banner hint: ${input.referencePosterCopyHints.bottomBanner}.`
-      : null,
-    callouts.length ? `Operator callout hints: ${callouts.join(" | ")}.` : null,
-  ].filter(Boolean);
+  const copySheetHighlights = splitCopySheetHighlights(input.sellingPoints);
 
   return [
-    `Remake the second input image as a poster in ${input.language} for market ${input.country}.`,
-    buildSimplifiedChineseOnlyLine(input.language),
-    "The first image is the real product source. The second image is the exact visual reference poster.",
-    "Keep the second image's overall composition, camera angle, background type, major text zones, packaging relationship, and poster feeling close to the reference.",
-    "Replace only the reference product with the product from the first image.",
-    "Use the first image for product truth only: shape, cap, label placement, material, transparency, reflections, proportions, and recognizable identity.",
-    "Keep it as a poster remake. Do not redesign it into a generic lifestyle ad.",
-    ...strengthLines,
-    ...buildBrandOverrideLines(input.brandProfile),
-    `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} fidelity.`,
+    "Strict reference remake task.",
+    "Input order is fixed: image 1 is the true source image, image 2 is the reference master image.",
+    "Use image 2 as the master blueprint and recreate it as faithfully as possible.",
+    "Use image 1 only to replace the subject and every directly related element that belongs to that subject.",
+    "That replacement includes the main product, packaging, labels, product-family variants, and any accessory, prop, badge, or graphic element that is clearly tied to the replaced subject.",
+    "Keep everything else as unchanged as possible: composition, crop, framing, perspective, camera angle, background, lighting, atmosphere, scene type, text zones, banner bars, typography feel, color blocking, decorative elements, and overall poster hierarchy.",
+    "Do not redesign, restyle, recompose, simplify, optimize, localize, or invent a new campaign idea.",
+    "Do not change the ad logic, scene concept, visual style, layout system, or decoration language unless the subject replacement makes a tiny correction unavoidable.",
+    "Use the first image only for visual truth: subject identity, shape, proportions, materials, texture, transparency, reflections, label placement, logo placement, and product-family cues.",
+    input.referenceCopyMode === "copy-sheet"
+      ? "Text source mode: copy-sheet. Keep the reference text layout, density, block positions, and typography feel, but rewrite only the content that should change."
+      : "Text source mode: follow-reference. Preserve the reference image's original wording whenever possible and only make the smallest necessary text edits when the replaced subject would otherwise create an obvious conflict.",
+    input.referenceCopyMode === "copy-sheet"
+      ? "When rewriting text, prioritize the operator copy sheet fields first: product name, brand name, selling points, and additional notes."
+      : "If the reference text is readable and still compatible with the replaced subject, keep it instead of rewriting it.",
+    input.referenceCopyMode === "copy-sheet"
+      ? "If the copy sheet is incomplete, infer the minimum necessary replacement wording from image 1 instead of inventing new marketing claims."
+      : "If a text block must change, keep the same layout role, wording length, typography feel, and visual weight as the reference.",
     buildPromptFactLine([
       ["Product name", input.productName],
       ["Brand", input.brandName],
-      ["Category", categoryLabel],
-      ["Platform", input.platform],
+      ["Category", normalizePromptCategory(input.category)],
     ]),
-    buildPromptFactLine([["Selling points for product understanding only", input.sellingPoints]]),
-    buildPromptFactLine([["Additional notes", input.sourceDescription]]),
-    input.preserveReferenceText
-      ? "If the reference contains readable text, keep the same main message structure and similar text placement whenever possible."
-      : "Text can be adapted, but keep the same number of main text blocks and the same banner/title layout.",
-    ...hintLines,
-    extraPrompt ? `Extra remake guidance: ${extraPrompt}` : null,
+    input.referenceCopyMode === "copy-sheet"
+      ? buildPromptFactLine([["Copy sheet selling points", copySheetHighlights.join(" | ")]])
+      : null,
+    input.referenceCopyMode === "copy-sheet"
+      ? buildPromptFactLine([["Copy sheet notes", input.sourceDescription]])
+      : null,
+    `Target aspect ratio: ${input.ratio}. Aim for ${input.resolutionLabel} fidelity.`,
     buildRestrictionsLine(input.restrictions),
-    negativePrompt ? `Extra avoid instructions: ${negativePrompt}` : null,
-    "Prefer preserving the poster structure, packaging relationship, and title/banner hierarchy over exact lettering.",
-    "Avoid generic white-background restyling, duplicated products, distorted packaging, wrong labels, or missing banner blocks.",
+    "Priority order: 1) reference-image fidelity, 2) correct subject and related-element replacement from image 1, 3) preserve the original poster structure and text system.",
+    "Avoid generic restyling, duplicated subjects, mismatched packaging, wrong labels, missing text blocks, missing banner bars, or any change that moves the result away from image 2.",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+export function buildReferenceRemixCopyBundle(input: {
+  productName: string;
+  brandName: string;
+  sellingPoints: string;
+  sourceDescription: string;
+  referenceCopyMode: ReferenceCopyMode;
+}): GeneratedCopyBundle {
+  const highlights = splitCopySheetHighlights(input.sellingPoints);
+  const optimizedPrompt =
+    input.referenceCopyMode === "copy-sheet"
+      ? [input.productName, input.brandName, highlights.join(" | "), input.sourceDescription].filter(Boolean).join(" · ")
+      : "Strict reference remake";
+
+  return {
+    optimizedPrompt,
+    title: input.productName,
+    subtitle: input.referenceCopyMode === "copy-sheet" ? input.brandName || input.sourceDescription : "",
+    highlights: input.referenceCopyMode === "copy-sheet" ? highlights : [],
+    detailAngles: [],
+    painPoints: [],
+    cta: "",
+    posterHeadline: input.productName,
+    posterSubline: input.referenceCopyMode === "copy-sheet" ? input.sourceDescription : "",
+  };
 }
 
 export function toGeneratedCopyBundleFromRemakePoster(copy: ReferencePosterCopy): GeneratedCopyBundle {

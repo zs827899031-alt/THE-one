@@ -1,10 +1,7 @@
 import {
-  analyzeReferenceLayout,
   optimizeUserImagePrompt,
-  buildRemakeCopyBundle,
   generateCopyBundle,
   generateEditedImage,
-  generateRemakePosterCopy,
   normalizeProviderError,
   translateUserPromptInputs,
   translateCreativeInputs,
@@ -12,16 +9,17 @@ import {
 import { splitCompositeSourceDescription } from "@/lib/creative-fields";
 import { syncJobToFeishu } from "@/lib/feishu";
 import { buildProviderDimensionWarning, meetsRequestedResolutionBucket } from "@/lib/image-size-policy";
-import { createPosterSvg } from "@/lib/poster";
 import {
   getAssetById,
   getBrandByName,
   getJobById,
   getJobDetails,
+  getJobItemStatusSummary,
   getSettings,
   getTemplateById,
   insertAsset,
   listJobItems,
+  resetJobItemsToQueued,
   resolveTemplate,
   updateJobFeishuSyncState,
   updateJobItemFailure,
@@ -33,8 +31,8 @@ import {
   updateJobStatus,
 } from "@/lib/db";
 import { readAssetBuffer, writeFileAsset } from "@/lib/storage";
-import type { AssetRecord, ProviderDebugInfo, ProviderOverride } from "@/lib/types";
-import { buildPromptModeCopyBundle } from "@/lib/templates";
+import type { ProviderDebugInfo, ProviderOverride } from "@/lib/types";
+import { buildPromptModeCopyBundle, buildReferenceRemixCopyBundle } from "@/lib/templates";
 import { detectImageDimensions, isGeminiImageSizeBucket } from "@/lib/utils";
 
 function ratioDelta(actualWidth: number, actualHeight: number, requestedRatio: string) {
@@ -78,6 +76,42 @@ function summarizePartialFailure(
   }
 
   return `${totalCount} variants requested: ${successCount} succeeded, ${failureCount} failed.`;
+}
+
+function settleJobStatusFromItems(jobId: string) {
+  const items = listJobItems(jobId);
+  const summary = getJobItemStatusSummary(jobId);
+
+  if (summary.total === 0) {
+    updateJobStatus(jobId, "failed", "No job items were created.");
+    return;
+  }
+
+  if (summary.queuedCount > 0) {
+    updateJobStatus(jobId, "queued");
+    return;
+  }
+
+  if (summary.processingCount > 0) {
+    updateJobStatus(jobId, "processing");
+    return;
+  }
+
+  if (summary.completedCount === summary.total) {
+    updateJobStatus(jobId, "completed");
+    return;
+  }
+
+  if (summary.completedCount > 0 && summary.failedCount > 0) {
+    const failedDebugs = items
+      .filter((item) => item.status === "failed")
+      .map((item) => item.providerDebug ?? null);
+    updateJobStatus(jobId, "partial", summarizePartialFailure(summary.total, summary.completedCount, failedDebugs));
+    return;
+  }
+
+  const firstFailureMessage = items.find((item) => item.status === "failed")?.errorMessage ?? "All variants failed to generate.";
+  updateJobStatus(jobId, "failed", firstFailureMessage);
 }
 
 function extensionForMimeType(mimeType: string) {
@@ -158,16 +192,19 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
     return;
   }
 
-  updateJobStatus(jobId, "processing");
+  resetJobItemsToQueued(jobId);
   const items = listJobItems(jobId);
-  let successCount = 0;
-  let failureCount = 0;
-  let firstFailureMessage: string | null = null;
-  const failureDebugs: Array<ProviderDebugInfo | null> = [];
+  const queuedItems = items.filter((item) => item.status === "queued");
+  if (!queuedItems.length) {
+    settleJobStatusFromItems(jobId);
+    return;
+  }
+
+  updateJobStatus(jobId, "processing");
   const rawCreativeFields = splitCompositeSourceDescription(job.sourceDescription);
 
   const localizedInputs =
-    job.creationMode === "prompt"
+    job.creationMode === "prompt" || job.creationMode === "reference-remix"
       ? null
       : await translateCreativeInputs({
           apiKey,
@@ -190,23 +227,28 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         }).catch(() => null);
   updateJobLocalizedInputs(jobId, localizedInputs);
 
-  const translatedPromptInputs =
+  const promptModeInputs =
     job.creationMode === "prompt"
-      ? await translateUserPromptInputs({
-          apiKey,
-          textModel: settings.defaultTextModel,
-          apiBaseUrl,
-          apiVersion,
-          apiHeaders,
-          country: job.country,
-          language: job.language,
-          platform: job.platform,
-          customPrompt: job.customPrompt,
-          customNegativePrompt: job.customNegativePrompt,
-        }).catch(() => ({
-          customPrompt: job.customPrompt,
-          customNegativePrompt: job.customNegativePrompt,
-        }))
+      ? job.translatePromptToOutputLanguage
+        ? await translateUserPromptInputs({
+            apiKey,
+            textModel: settings.defaultTextModel,
+            apiBaseUrl,
+            apiVersion,
+            apiHeaders,
+            country: job.country,
+            language: job.language,
+            platform: job.platform,
+            customPrompt: job.customPrompt,
+            customNegativePrompt: job.customNegativePrompt,
+          }).catch(() => ({
+            customPrompt: job.customPrompt,
+            customNegativePrompt: job.customNegativePrompt,
+          }))
+        : {
+            customPrompt: job.customPrompt,
+            customNegativePrompt: job.customNegativePrompt,
+          }
       : null;
 
   const effectiveInputs = {
@@ -218,10 +260,6 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
     sizeInfo: localizedInputs?.sizeInfo || rawCreativeFields.sizeInfo,
   };
   const brandProfile = job.brandName ? getBrandByName(job.brandName) : null;
-  let referenceLayoutAnalysis = job.referenceLayoutAnalysis;
-  let referencePosterCopy = job.referencePosterCopy;
-  const referenceLayoutPromptHints = job.referenceLayoutOverride;
-  const referencePosterCopyPromptHints = job.referencePosterCopyOverride;
 
   if (job.creationMode === "reference-remix") {
     const primaryReferenceAsset = referenceAssets[0];
@@ -229,55 +267,10 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
       updateJobStatus(jobId, "failed", "Reference remix mode requires at least one reference image.");
       return;
     }
-
-    if (!referenceLayoutAnalysis) {
-      try {
-        const referenceBuffer = await readAssetBuffer(primaryReferenceAsset);
-        referenceLayoutAnalysis = await analyzeReferenceLayout({
-          apiKey,
-          textModel: settings.defaultTextModel,
-          apiBaseUrl,
-          apiVersion,
-          apiHeaders,
-          uiLanguage: job.uiLanguage,
-          referenceImage: {
-            mimeType: primaryReferenceAsset.mimeType,
-            buffer: referenceBuffer,
-          },
-        });
-      } catch {
-        referenceLayoutAnalysis = null;
-      }
-    }
-
-    if (!job.preserveReferenceText && !referencePosterCopy && referenceLayoutAnalysis) {
-      try {
-        referencePosterCopy = await generateRemakePosterCopy({
-          apiKey,
-          textModel: settings.defaultTextModel,
-          apiBaseUrl,
-          apiVersion,
-          apiHeaders,
-          country: job.country,
-          language: job.language,
-          platform: job.platform,
-          category: job.category,
-          productName: effectiveInputs.productName,
-          brandName: job.brandName,
-          sellingPoints: effectiveInputs.sellingPoints,
-          restrictions: effectiveInputs.restrictions,
-          sourceDescription: effectiveInputs.sourceDescription,
-          referenceLayout: referenceLayoutAnalysis,
-        });
-      } catch {
-        referencePosterCopy = null;
-      }
-    }
-
-    updateJobReferenceArtifacts(jobId, referenceLayoutAnalysis, referencePosterCopy);
+    updateJobReferenceArtifacts(jobId, null, null);
   }
 
-  for (const item of items) {
+  for (const item of queuedItems) {
     try {
       updateJobItemProcessing(item.id);
       const sourceAsset = item.sourceAssetId ? getAssetById(item.sourceAssetId) : null;
@@ -294,7 +287,7 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
           ]
         : [];
       const referenceImages = await Promise.all(
-        referenceAssets.map(async (asset) => ({
+        referenceAssets.slice(0, 1).map(async (asset) => ({
           mimeType: asset.mimeType,
           buffer: await readAssetBuffer(asset),
         })),
@@ -314,17 +307,16 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
 
       const copy =
         job.creationMode === "reference-remix"
-          ? buildRemakeCopyBundle(
-              referencePosterCopyPromptHints ??
-                referencePosterCopy ?? {
-                  summary: effectiveInputs.sourceDescription || effectiveInputs.sellingPoints || effectiveInputs.productName,
-                  topBanner: "",
-                  headline: effectiveInputs.productName,
-                  subheadline: "",
-                  bottomBanner: "",
-                  callouts: [],
-                },
-            )
+          ? buildReferenceRemixCopyBundle({
+              productName:
+                effectiveInputs.productName ||
+                sourceAsset?.originalName.replace(/\.[^.]+$/, "") ||
+                (job.uiLanguage === "zh" ? "参考图复刻" : "Reference remake"),
+              brandName: job.brandName,
+              sellingPoints: effectiveInputs.sellingPoints,
+              sourceDescription: effectiveInputs.sourceDescription,
+              referenceCopyMode: job.referenceCopyMode,
+            })
           : job.creationMode === "prompt"
             ? buildPromptModeCopyBundle({
                 productName: effectiveInputs.productName,
@@ -377,10 +369,11 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
                 imageType: item.imageType,
                 ratio: item.ratio,
                 resolutionLabel: item.resolutionLabel,
-                customPrompt: translatedPromptInputs?.customPrompt || job.customPrompt,
-                customNegativePrompt: translatedPromptInputs?.customNegativePrompt || job.customNegativePrompt,
+                customPrompt: promptModeInputs?.customPrompt || job.customPrompt,
+                customNegativePrompt: promptModeInputs?.customNegativePrompt || job.customNegativePrompt,
+                translateToOutputLanguage: job.translatePromptToOutputLanguage,
               })
-            : translatedPromptInputs?.customPrompt || job.customPrompt
+            : promptModeInputs?.customPrompt || job.customPrompt
           : null;
 
       const imageInput = {
@@ -392,11 +385,12 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         creationMode: job.creationMode,
         referenceStrength: job.referenceStrength,
         preserveReferenceText: job.preserveReferenceText,
+        referenceCopyMode: job.referenceCopyMode,
         customPromptText:
-          promptModePrompt ?? (job.creationMode === "prompt" ? translatedPromptInputs?.customPrompt || job.customPrompt : undefined),
+          promptModePrompt ?? (job.creationMode === "prompt" ? promptModeInputs?.customPrompt || job.customPrompt : undefined),
         customNegativePrompt:
           job.creationMode === "prompt"
-            ? translatedPromptInputs?.customNegativePrompt || job.customNegativePrompt
+            ? promptModeInputs?.customNegativePrompt || job.customNegativePrompt
             : undefined,
         referenceExtraPrompt: job.referenceExtraPrompt,
         referenceNegativePrompt: job.referenceNegativePrompt,
@@ -416,8 +410,8 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         ratio: item.ratio,
         resolutionLabel: item.resolutionLabel,
         copy,
-        referenceLayout: referenceLayoutPromptHints,
-        referencePosterCopy: referencePosterCopyPromptHints,
+        referenceLayout: null,
+        referencePosterCopy: null,
         template: matchedTemplate,
         sourceImages: [...sourceImages, ...referenceImages],
       };
@@ -482,41 +476,16 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
         language: job.uiLanguage,
       });
 
-      let layoutAsset: AssetRecord | null = null;
-      if (job.includeCopyLayout) {
-        const posterSvg = createPosterSvg({
-          imageBuffer: generated.buffer,
-          imageMimeType: generated.mimeType,
-          width: item.width,
-          height: item.height,
-          copy,
-          platform: job.platform,
-          imageType: item.imageType,
-          productName: effectiveInputs.productName,
-        });
-        layoutAsset = await writeFileAsset({
-          jobId,
-          jobItemId: item.id,
-          kind: "layout",
-          originalName: `${job.productName}-${item.imageType}-${item.variantIndex}.svg`,
-          mimeType: "image/svg+xml",
-          buffer: Buffer.from(posterSvg, "utf8"),
-          width: item.width,
-          height: item.height,
-        });
-        insertAsset(layoutAsset);
-      }
-
       updateJobItemResult({
         itemId: item.id,
         promptText: generated.promptText || copy.optimizedPrompt,
         negativePrompt:
           job.creationMode === "prompt"
-            ? translatedPromptInputs?.customNegativePrompt || job.customNegativePrompt
+            ? promptModeInputs?.customNegativePrompt || job.customNegativePrompt
             : null,
         copy,
         generatedAssetId: generatedAsset.id,
-        layoutAssetId: layoutAsset?.id ?? null,
+        layoutAssetId: null,
         warningMessage: dimensionWarning,
         providerDebug: {
           ...(generated.providerDebug ?? {}),
@@ -549,9 +518,7 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
       const warningMessage = [dimensionWarning, syncWarning].filter(Boolean).join(" | ") || null;
       updateJobItemWarning(item.id, warningMessage);
 
-      successCount += 1;
     } catch (error) {
-      failureCount += 1;
       const normalizedError = normalizeProviderError(error);
       const promptText =
         error && typeof error === "object" && "promptText" in error ? String((error as { promptText?: string }).promptText ?? "") : null;
@@ -561,16 +528,12 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
           : null;
       const failureMessage =
         job.creationMode === "reference-remix" ? `Poster remake generation failed: ${normalizedError}` : normalizedError;
-      if (!firstFailureMessage) {
-        firstFailureMessage = failureMessage;
-      }
-      failureDebugs.push(providerDebug);
       updateJobItemFailure(
         item.id,
         failureMessage,
         promptText,
         job.creationMode === "prompt"
-          ? translatedPromptInputs?.customNegativePrompt || job.customNegativePrompt
+          ? promptModeInputs?.customNegativePrompt || job.customNegativePrompt
           : null,
         providerDebug,
       );
@@ -583,27 +546,7 @@ export async function processJob(jobId: string, providerOverride?: ProviderOverr
     }
   }
 
-  if (successCount > 0 && failureCount > 0) {
-    updateJobStatus(jobId, "partial", summarizePartialFailure(items.length, successCount, failureDebugs));
-    try {
-      await syncJobSummaryToFeishu(jobId, settings);
-    } catch {
-      // Keep task completion flow resilient if Feishu summary sync fails.
-    }
-    return;
-  }
-
-  if (successCount > 0) {
-    updateJobStatus(jobId, "completed");
-    try {
-      await syncJobSummaryToFeishu(jobId, settings);
-    } catch {
-      // Keep task completion flow resilient if Feishu summary sync fails.
-    }
-    return;
-  }
-
-  updateJobStatus(jobId, "failed", firstFailureMessage ?? "All variants failed to generate.");
+  settleJobStatusFromItems(jobId);
   try {
     await syncJobSummaryToFeishu(jobId, settings);
   } catch {

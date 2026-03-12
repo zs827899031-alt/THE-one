@@ -1,7 +1,9 @@
-﻿import fs from "node:fs/promises";
+import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 
 import { NextRequest, NextResponse } from "next/server";
+import sharp from "sharp";
 
 import { getAssetById } from "@/lib/db";
 
@@ -14,6 +16,16 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   "image/gif": ".gif",
   "image/svg+xml": ".svg",
 };
+
+const RESIZABLE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/avif", "image/tiff"]);
+const MIN_IMAGE_DIMENSION = 64;
+const MAX_IMAGE_DIMENSION = 2048;
+const DEFAULT_IMAGE_QUALITY = 78;
+const MIN_IMAGE_QUALITY = 50;
+const MAX_IMAGE_QUALITY = 90;
+
+// Cap Sharp's in-process cache so large preview bursts do not keep too much memory resident.
+sharp.cache({ memory: 32, files: 0, items: 64 });
 
 function inferDownloadName(originalName: string, mimeType: string) {
   const trimmed = originalName.trim() || "asset";
@@ -49,6 +61,19 @@ function makeContentDisposition(filename: string) {
   return `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`;
 }
 
+function clampInteger(value: string | null, minimum: number, maximum: number) {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return Math.min(maximum, Math.max(minimum, parsed));
+}
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ assetId: string }> }) {
   const { assetId } = await params;
   const asset = getAssetById(assetId);
@@ -56,19 +81,48 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ error: "Asset not found." }, { status: 404 });
   }
 
-  const buffer = await fs.readFile(asset.filePath);
   const filename = inferDownloadName(asset.originalName, asset.mimeType);
   const shouldDownload = request.nextUrl.searchParams.get("download") === "1";
+  const requestedWidth = clampInteger(request.nextUrl.searchParams.get("w"), MIN_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION);
+  const requestedQuality =
+    clampInteger(request.nextUrl.searchParams.get("q"), MIN_IMAGE_QUALITY, MAX_IMAGE_QUALITY) ?? DEFAULT_IMAGE_QUALITY;
+  const targetWidth = !shouldDownload && requestedWidth !== null && RESIZABLE_MIME_TYPES.has(asset.mimeType) ? requestedWidth : null;
 
   const headers = new Headers({
-    "Content-Type": asset.mimeType,
     "Cache-Control": "public, max-age=31536000, immutable",
     "X-Content-Type-Options": "nosniff",
   });
 
   if (shouldDownload) {
+    headers.set("Content-Type", asset.mimeType);
     headers.set("Content-Disposition", makeContentDisposition(filename));
   }
 
-  return new NextResponse(buffer, { headers });
+  if (targetWidth) {
+    try {
+      const buffer = await sharp(asset.filePath)
+        .rotate()
+        .resize({
+          width: targetWidth,
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .webp({
+          quality: requestedQuality,
+          effort: 4,
+        })
+        .toBuffer();
+
+      headers.set("Content-Type", "image/webp");
+      return new NextResponse(Uint8Array.from(buffer), { headers });
+    } catch {
+      // Fall back to the original asset when optimization fails.
+    }
+  }
+
+  headers.set("Content-Type", asset.mimeType);
+  const stream = fs.createReadStream(asset.filePath);
+  const webStream = Readable.toWeb(stream) as ReadableStream;
+
+  return new NextResponse(webStream, { headers });
 }

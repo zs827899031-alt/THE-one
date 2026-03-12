@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import sharp from "sharp";
 
 import {
   buildCopyPrompt,
@@ -192,6 +193,12 @@ function extractImageUrlFromText(text: string) {
   return directMatch?.[0] ?? null;
 }
 
+const PROVIDER_REQUEST_RETRY_DELAYS_MS = [1000, 3000, 8000] as const;
+const PROVIDER_IMAGE_MAX_EDGE = 3072;
+const PROVIDER_IMAGE_TARGET_BYTES = 8 * 1024 * 1024;
+const PROVIDER_IMAGE_PRIMARY_JPEG_QUALITY = 88;
+const PROVIDER_IMAGE_FALLBACK_JPEG_QUALITY = 82;
+
 async function fetchImageWithRetries(url: string, attempts = 3) {
   let lastError: Error | null = null;
 
@@ -211,6 +218,100 @@ async function fetchImageWithRetries(url: string, attempts = 3) {
   }
 
   throw lastError ?? new Error("Unknown image fetch failure");
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractRawErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRetryableProviderRequestError(error: unknown) {
+  return /(fetch failed|network|socket|timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|HTTP 5\d{2}|HTTP 429|rate limit)/i.test(
+    extractRawErrorMessage(error),
+  );
+}
+
+async function waitForProviderRetry(attempt: number) {
+  const baseDelay = PROVIDER_REQUEST_RETRY_DELAYS_MS[Math.max(0, attempt - 1)] ?? PROVIDER_REQUEST_RETRY_DELAYS_MS.at(-1)!;
+  const jitter = Math.floor(Math.random() * 300);
+  await sleep(baseDelay + jitter);
+}
+
+function getResizeDimensions(width?: number, height?: number) {
+  if (!width || !height) {
+    return null;
+  }
+
+  const longestEdge = Math.max(width, height);
+  if (longestEdge <= PROVIDER_IMAGE_MAX_EDGE) {
+    return null;
+  }
+
+  const scale = PROVIDER_IMAGE_MAX_EDGE / longestEdge;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+async function prepareImageForProvider(image: { mimeType: string; buffer: Buffer }) {
+  const baseImage = sharp(image.buffer, { failOn: "none" });
+  const metadata = await baseImage.metadata();
+  const resizeDimensions = getResizeDimensions(metadata.width, metadata.height);
+  const needsResize = Boolean(resizeDimensions);
+  const hasAlpha = Boolean(metadata.hasAlpha);
+  const isPng = image.mimeType === "image/png";
+  const shouldKeepOriginal = !needsResize && image.buffer.length <= PROVIDER_IMAGE_TARGET_BYTES && (!isPng || hasAlpha);
+
+  if (shouldKeepOriginal) {
+    return image;
+  }
+
+  const makePipeline = () => {
+    const pipeline = sharp(image.buffer, { failOn: "none" });
+    if (resizeDimensions) {
+      pipeline.resize({
+        width: resizeDimensions.width,
+        height: resizeDimensions.height,
+        fit: "inside",
+        withoutEnlargement: true,
+      });
+    }
+    return pipeline;
+  };
+
+  if (hasAlpha) {
+    const pngBuffer = await makePipeline()
+      .png({
+        compressionLevel: 9,
+        adaptiveFiltering: true,
+        palette: true,
+      })
+      .toBuffer();
+
+    if (pngBuffer.length <= PROVIDER_IMAGE_TARGET_BYTES) {
+      return { mimeType: "image/png", buffer: pngBuffer };
+    }
+  }
+
+  const primaryJpegBuffer = await makePipeline()
+    .flatten({ background: "#ffffff" })
+    .jpeg({ quality: PROVIDER_IMAGE_PRIMARY_JPEG_QUALITY, mozjpeg: true })
+    .toBuffer();
+
+  if (primaryJpegBuffer.length <= PROVIDER_IMAGE_TARGET_BYTES) {
+    return { mimeType: "image/jpeg", buffer: primaryJpegBuffer };
+  }
+
+  const fallbackJpegBuffer = await makePipeline()
+    .flatten({ background: "#ffffff" })
+    .jpeg({ quality: PROVIDER_IMAGE_FALLBACK_JPEG_QUALITY, mozjpeg: true })
+    .toBuffer();
+
+  return { mimeType: "image/jpeg", buffer: fallbackJpegBuffer };
 }
 
 function parseHeadersJson(rawHeaders?: string): Record<string, string> | undefined {
@@ -256,6 +357,13 @@ function createClient(config: ProviderConfig) {
 }
 
 export function normalizeProviderError(error: unknown): string {
+  if (error && typeof error === "object" && "providerDebug" in error) {
+    const providerDebug = (error as { providerDebug?: ProviderDebugInfo | null }).providerDebug;
+    if (providerDebug?.failureStage === "provider-request") {
+      return "Provider request failed before a response was returned.";
+    }
+  }
+
   const raw = error instanceof Error ? error.message : String(error);
 
   try {
@@ -502,13 +610,17 @@ export async function optimizeUserImagePrompt(input: {
   resolutionLabel: string;
   customPrompt: string;
   customNegativePrompt?: string;
+  translateToOutputLanguage?: boolean;
 }): Promise<string> {
   const ai = createClient(input);
   const category = normalizePromptCategory(input.category);
+  const preserveOriginalLanguage = !input.translateToOutputLanguage;
   const lines = [
     "You are an e-commerce image prompt optimizer.",
-    `Rewrite the user's image prompt into one strong plain-text prompt for ${input.platform} in ${input.language} for market ${input.country}.`,
-    buildSimplifiedChineseOnlyLine(input.language),
+    preserveOriginalLanguage
+      ? "Rewrite the user's image prompt into one strong plain-text prompt while preserving the user's original language. Use the market and platform context only as creative constraints, not as a translation instruction."
+      : `Rewrite the user's image prompt into one strong plain-text prompt for ${input.platform} in ${input.language} for market ${input.country}.`,
+    input.translateToOutputLanguage ? buildSimplifiedChineseOnlyLine(input.language) : null,
     "Return plain text only. Do not return JSON, markdown, bullet lists, or explanations.",
     "Keep the user's main creative intent, but make it more image-model friendly, concise, commercially usable, and strongly oriented toward realistic photography.",
     "Optimization goal: produce a prompt that is more likely to generate a believable real photo rather than an illustration, CGI render, or stylized poster.",
@@ -516,6 +628,7 @@ export async function optimizeUserImagePrompt(input: {
     "Prefer wording that suggests a real photographed scene, realistic lens behavior, authentic reflections, and grounded background detail.",
     "Avoid pushing the output toward illustration, cartoon styling, obvious 3D rendering, plastic-looking surfaces, surreal props, or fake-looking text overlays unless the user explicitly asked for that.",
     "Always preserve the uploaded product identity, shape, material, label placement, and key visual truth.",
+    preserveOriginalLanguage ? "Preserve the user's original prompt language in the final optimized result." : `Output the final optimized prompt in ${input.language}.`,
     buildPromptFactLine([
       ["Product name", input.productName],
       ["Brand", input.brandName],
@@ -528,11 +641,11 @@ export async function optimizeUserImagePrompt(input: {
     `Target aspect ratio: ${input.ratio}. Resolution bucket: ${input.resolutionLabel}.`,
     `User prompt: ${input.customPrompt}`,
     input.customNegativePrompt?.trim() ? `Negative prompt / avoid: ${input.customNegativePrompt.trim()}` : "",
-  ];
+  ].filter(Boolean);
 
   const response = await ai.models.generateContent({
     model: input.textModel,
-    contents: lines.filter(Boolean).join("\n"),
+    contents: lines.join("\n"),
     config: {
       temperature: 0.35,
     },
@@ -786,6 +899,7 @@ export async function generateEditedImage(input: {
   creationMode?: "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
   referenceStrength?: "reference" | "balanced" | "product";
   preserveReferenceText?: boolean;
+  referenceCopyMode?: "reference" | "copy-sheet";
   customPromptText?: string;
   customNegativePrompt?: string;
   referenceExtraPrompt?: string;
@@ -840,6 +954,7 @@ export async function generateEditedImage(input: {
           resolutionLabel: input.resolutionLabel,
           referenceStrength: input.referenceStrength ?? "balanced",
           preserveReferenceText: input.preserveReferenceText ?? true,
+          referenceCopyMode: input.referenceCopyMode ?? "reference",
           referenceExtraPrompt: input.referenceExtraPrompt,
           referenceNegativePrompt: input.referenceNegativePrompt,
           referenceLayoutHints: input.referenceLayout,
@@ -866,6 +981,10 @@ export async function generateEditedImage(input: {
           })
       : buildImagePrompt(input);
 
+  const preparedImages = await Promise.all(input.sourceImages.map((image) => prepareImageForProvider(image)));
+  const requestImageCount = preparedImages.length;
+  const requestBytes = preparedImages.reduce((total, image) => total + image.buffer.length, 0);
+
   const withPromptContext = (error: unknown, providerDebug?: ProviderDebugInfo | null) => {
     const wrapped = error instanceof Error ? error : new Error(String(error));
     const enriched = wrapped as Error & { promptText?: string; providerDebug?: ProviderDebugInfo | null };
@@ -874,27 +993,51 @@ export async function generateEditedImage(input: {
     return enriched;
   };
 
+  const buildRequestDebug = (failureReason?: string, attempt?: number, maxAttempts?: number) =>
+    ({
+      retrievalMethod: "inline",
+      failureStage: "provider-request",
+      failureReason,
+      attempt,
+      maxAttempts,
+      requestImageCount,
+      requestBytes,
+    }) satisfies ProviderDebugInfo;
+
   let response;
-  try {
-    response = await ai.models.generateContent({
-      model: input.imageModel,
-      contents: [
-        ...input.sourceImages.map((image) => ({
-          inlineData: {
-            mimeType: image.mimeType,
-            data: image.buffer.toString("base64"),
-          },
-        })),
-        { text: promptText },
-      ],
-      config: {
-        responseModalities: ["TEXT", "IMAGE"],
-        imageConfig,
-        temperature: 0.7,
-      },
-    });
-  } catch (error) {
-    throw withPromptContext(error);
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      response = await ai.models.generateContent({
+        model: input.imageModel,
+        contents: [
+          ...preparedImages.map((image) => ({
+            inlineData: {
+              mimeType: image.mimeType,
+              data: image.buffer.toString("base64"),
+            },
+          })),
+          { text: promptText },
+        ],
+        config: {
+          responseModalities: ["TEXT", "IMAGE"],
+          imageConfig,
+          temperature: 0.7,
+        },
+      });
+      break;
+    } catch (error) {
+      const failureReason = extractRawErrorMessage(error);
+      if (!isRetryableProviderRequestError(error) || attempt === maxAttempts) {
+        throw withPromptContext(error, buildRequestDebug(failureReason, attempt, maxAttempts));
+      }
+
+      await waitForProviderRetry(attempt);
+    }
+  }
+
+  if (!response) {
+    throw withPromptContext(new Error("Provider request failed without returning a response."), buildRequestDebug(undefined, maxAttempts, maxAttempts));
   }
 
   const parts = response.candidates?.[0]?.content?.parts ?? [];
@@ -919,6 +1062,8 @@ export async function generateEditedImage(input: {
             rawText: textContent || "",
             failureStage: "provider-image-download",
             failureReason,
+            requestImageCount,
+            requestBytes,
           },
         );
       }
@@ -935,6 +1080,8 @@ export async function generateEditedImage(input: {
           retrievalMethod: "url",
           imageUrl,
           rawText: textContent || "",
+          requestImageCount,
+          requestBytes,
         } satisfies ProviderDebugInfo,
       };
     }
@@ -944,6 +1091,8 @@ export async function generateEditedImage(input: {
       rawText: textContent || "",
       failureStage: "response",
       failureReason: textContent || "Gemini did not return an image.",
+      requestImageCount,
+      requestBytes,
     });
   }
 
@@ -955,6 +1104,8 @@ export async function generateEditedImage(input: {
     providerDebug: {
       retrievalMethod: "inline",
       rawText: textContent || "",
+      requestImageCount,
+      requestBytes,
     } satisfies ProviderDebugInfo,
   };
 }

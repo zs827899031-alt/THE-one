@@ -8,6 +8,7 @@ export type JobItemReviewStatus = "unreviewed" | "shortlisted" | "approved" | "r
 
 export type CreationMode = "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
 export type ReferenceStrength = "reference" | "balanced" | "product";
+export type ReferenceCopyMode = "reference" | "copy-sheet";
 
 export type ImageType =
   | "scene"
@@ -54,6 +55,8 @@ export interface FeishuFieldMapping {
   image?: string;
   prompt?: string;
   negativePrompt?: string;
+  promptTranslation?: string;
+  promptOptimization?: string;
   status?: string;
   typeSummary?: string;
   ratioSummary?: string;
@@ -135,8 +138,12 @@ export interface ProviderDebugInfo {
   retrievalMethod?: "inline" | "url";
   imageUrl?: string;
   rawText?: string;
-  failureStage?: "response" | "provider-image-download";
+  failureStage?: "provider-request" | "response" | "provider-image-download";
   failureReason?: string;
+  attempt?: number;
+  maxAttempts?: number;
+  requestImageCount?: number;
+  requestBytes?: number;
   requestedWidth?: number;
   requestedHeight?: number;
   actualWidth?: number;
@@ -160,6 +167,7 @@ export interface JobRecord {
   creationMode: CreationMode;
   referenceStrength: ReferenceStrength;
   preserveReferenceText: boolean;
+  referenceCopyMode: ReferenceCopyMode;
   generatedCount: number;
   succeededCount: number;
   failedCount: number;
@@ -171,6 +179,7 @@ export interface JobRecord {
   restrictions: string;
   customPrompt: string;
   customNegativePrompt: string;
+  translatePromptToOutputLanguage: boolean;
   autoOptimizePrompt: boolean;
   referenceExtraPrompt: string;
   referenceNegativePrompt: string;

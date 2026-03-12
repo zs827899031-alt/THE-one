@@ -18,12 +18,20 @@ export function Navigation({ language }: { language: UiLanguage }) {
     { href: "/templates", label: t(language, "navTemplates") },
     { href: "/settings", label: t(language, "navSettings") },
   ];
+  const subtitle =
+    language === "zh"
+      ? "面向电商创意生产、审核与协同交付的本地化工作台"
+      : "A local workspace for ecommerce creative production, review, and delivery.";
 
   return (
     <header className="app-header">
-      <div>
-        <p className="eyebrow">{APP_NAME}</p>
+      <div className="app-header-brand">
+        <div className="app-brand-row">
+          <p className="eyebrow">{APP_NAME}</p>
+          <span className="app-brand-status">{language === "zh" ? "Product UI" : "Product UI"}</span>
+        </div>
         <h1>{APP_NAME}</h1>
+        <p className="app-brand-subtitle">{subtitle}</p>
       </div>
       <nav className="app-nav">
         {links.map((link) => (
@@ -32,7 +40,9 @@ export function Navigation({ language }: { language: UiLanguage }) {
           </Link>
         ))}
       </nav>
-      <LanguageToggle language={language} />
+      <div className="app-header-actions">
+        <LanguageToggle language={language} />
+      </div>
     </header>
   );
 }

@@ -22,6 +22,7 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
             sections: {
               gemini: "Gemini / 中转设置",
               feishu: "飞书多维表格同步",
+              storage: "素材与任务",
             },
             guides: {
               title: "接入说明",
@@ -34,6 +35,11 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
                 "开放平台应用里获取 App ID 与 App Secret。",
                 "从多维表格链接获取 App Token 和 Table ID。",
                 "字段映射至少保留 title 与 image，再测试飞书连接。",
+              ],
+              storage: [
+                "素材目录用于保存原图、参考图和生成结果。",
+                "并发任务数越高，占用的模型请求和本地资源越多。",
+                "建议先用 2 到 3，稳定后再逐步提高。",
               ],
             },
             labels: {
@@ -74,19 +80,23 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
               baseUrl: "留空表示使用 Google 官方 Gemini API；如使用中转站，请填写对方提供的 base_url。",
               headers: '示例：{"Authorization":"Bearer your-key"}。如不需要额外请求头，可留空。',
               version: "大多数 Gemini 兼容中转使用 v1beta。",
+              storageDir: "建议使用本机稳定磁盘路径，方便统一备份与迁移。",
+              maxConcurrency: "并发越高，任务吞吐越快，但也更容易触发中转限流或占满本机带宽。",
+              saveSummary: "先分别测试 Gemini / 飞书，再统一保存整页设置。",
               feishuEnable: "开启后，生成成功的图片会自动创建飞书多维表格记录，并上传到图片字段。",
               feishuToken: "可在飞书开放平台和多维表格链接中获取。",
               feishuParentType: "默认使用 bitable_image。若你的应用要求不同，可在这里修改。",
               feishuMapping:
-                "只会写入你配置过的字段。推荐先保留标题、生成图片、创作模式、平台、国家、语言、比例、分辨率、生成时间，再按需增加提示词等长文本字段。",
+                "只会写入你配置过的字段。推荐先保留标题、生成图片、生图模式、语言、提示词翻译、真实照片优化、图片统计、生成时间，再按需增加提示词等长文本字段。若把“生图模式”设为单选，建议统一选项为：标准模式、提示词模式、参考图复刻模式、套图模式、亚马逊A+模式。旧表如需继续保留，也仍兼容 platform / country 字段。",
               feishuSupportedFields:
-                "支持字段键：title、image、mode、platform、country、language、ratio、resolution、requestedSize、actualSize、status、prompt、negativePrompt、createdAt、jobId、itemId。",
+                "支持字段键：title、image、mode、platform、country、language、promptTranslation、promptOptimization、typeSummary、ratioSummary、resolutionSummary、sizeSummary、statusSummary、ratio、resolution、requestedSize、actualSize、status、prompt、negativePrompt、createdAt、jobId、itemId。",
             },
           }
         : {
             sections: {
               gemini: "Gemini / relay settings",
               feishu: "Feishu Bitable sync",
+              storage: "Assets and queue",
             },
             guides: {
               title: "Quick setup",
@@ -99,6 +109,11 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
                 "Get the App ID and App Secret from the Feishu developer console.",
                 "Get the App Token and Table ID from your Bitable URL.",
                 "Keep at least title and image mapped before testing the connection.",
+              ],
+              storage: [
+                "The asset directory stores source images, references, and generated outputs.",
+                "Higher concurrency increases throughput but also uses more relay quota and local resources.",
+                "Start with 2 or 3 and raise it only after the workflow stays stable.",
               ],
             },
             labels: {
@@ -139,13 +154,16 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
               baseUrl: "Leave blank for the official Google Gemini API. For a relay, paste the provider's base_url here.",
               headers: 'Example: {"Authorization":"Bearer your-key"}. Leave empty if your relay does not require extra headers.',
               version: "Most Gemini-compatible relays use v1beta.",
+              storageDir: "Use a stable local disk path so assets are easy to back up and migrate.",
+              maxConcurrency: "Higher concurrency speeds up batches, but it also increases the chance of relay throttling or local resource pressure.",
+              saveSummary: "Test Gemini and Feishu in their own cards first, then save the whole settings page.",
               feishuEnable: "When enabled, successful generated images will automatically create Feishu Bitable records and upload to the image field.",
               feishuToken: "You can find these in the Feishu developer console and the Bitable URL.",
               feishuParentType: "Defaults to bitable_image. Change it only if your Feishu app requires another upload parent type.",
               feishuMapping:
-                "Only mapped fields will be written. Start with title, generated image, mode, platform, country, language, ratio, resolution, and created time. Add long-text fields like prompt only when you really need them.",
+                "Only mapped fields will be written. Start with title, generated image, generation mode, language, prompt translation, prompt optimization, image summary, and created time. If generation mode is a single-select field, use: Standard mode, Prompt mode, Reference remake mode, Image set mode, Amazon A+ mode. Older tables can still keep platform / country if needed.",
               feishuSupportedFields:
-                "Supported keys: title, image, mode, platform, country, language, ratio, resolution, requestedSize, actualSize, status, prompt, negativePrompt, createdAt, jobId, itemId.",
+                "Supported keys: title, image, mode, platform, country, language, promptTranslation, promptOptimization, typeSummary, ratioSummary, resolutionSummary, sizeSummary, statusSummary, ratio, resolution, requestedSize, actualSize, status, prompt, negativePrompt, createdAt, jobId, itemId.",
             },
           },
     [language],
@@ -246,183 +264,210 @@ export function SettingsForm({ initialSettings, language }: { initialSettings: A
   }
 
   return (
-    <form className="panel form-panel settings-form-panel" onSubmit={handleSubmit}>
-      <div className="settings-section">
-        <div className="settings-section-header">
-          <h3>{text.sections.gemini}</h3>
-          <aside className="settings-guide-card">
-            <strong>{text.guides.title}</strong>
-            <ul>
-              {text.guides.gemini.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </aside>
-        </div>
-        <label>
-          <span>{text.labels.defaultApiKey}</span>
-          <input
-            type="password"
-            value={formState.defaultApiKey}
-            onChange={(event) => patchSettings({ defaultApiKey: event.target.value })}
-          />
-        </label>
-        <label>
-          <span>{text.labels.defaultApiBaseUrl}</span>
-          <input
-            placeholder="https://your-relay-host.example"
-            value={formState.defaultApiBaseUrl}
-            onChange={(event) => patchSettings({ defaultApiBaseUrl: event.target.value })}
-          />
-          <small className="helper">{text.hints.baseUrl}</small>
-        </label>
-        <label>
-          <span>{text.labels.defaultApiVersion}</span>
-          <input
-            value={formState.defaultApiVersion}
-            onChange={(event) => patchSettings({ defaultApiVersion: event.target.value })}
-          />
-          <small className="helper">{text.hints.version}</small>
-        </label>
-        <label>
-          <span>{text.labels.defaultApiHeaders}</span>
-          <textarea
-            rows={4}
-            placeholder='{"Authorization":"Bearer your-key"}'
-            value={formState.defaultApiHeaders}
-            onChange={(event) => patchSettings({ defaultApiHeaders: event.target.value })}
-          />
-          <small className="helper">{text.hints.headers}</small>
-        </label>
-        <label>
-          <span>{text.labels.defaultTextModel}</span>
-          <input
-            value={formState.defaultTextModel}
-            onChange={(event) => patchSettings({ defaultTextModel: event.target.value })}
-          />
-        </label>
-        <label>
-          <span>{text.labels.defaultImageModel}</span>
-          <input
-            value={formState.defaultImageModel}
-            onChange={(event) => patchSettings({ defaultImageModel: event.target.value })}
-          />
-        </label>
-        <div className="button-row">
-          <button className="ghost-button" disabled={isTestingProvider} onClick={handleProviderTest} type="button">
-            {isTestingProvider ? text.actions.testingProvider : text.actions.testProvider}
-          </button>
-        </div>
-        {providerTestMessage ? <p className="helper">{providerTestMessage}</p> : null}
-      </div>
-
-      <div className="settings-section">
-        <div className="settings-section-header">
-          <h3>{text.sections.feishu}</h3>
-          <aside className="settings-guide-card">
-            <strong>{text.guides.title}</strong>
-            <ul>
-              {text.guides.feishu.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          </aside>
-        </div>
-        <label className="settings-checkbox-row">
-          <input
-            checked={formState.feishuSyncEnabled}
-            onChange={(event) => patchSettings({ feishuSyncEnabled: event.target.checked })}
-            type="checkbox"
-          />
-          <span>{text.labels.feishuSyncEnabled}</span>
-        </label>
-        <small className="helper">{text.hints.feishuEnable}</small>
-        <label>
-          <span>{text.labels.feishuAppId}</span>
-          <input value={formState.feishuAppId} onChange={(event) => patchSettings({ feishuAppId: event.target.value })} />
-        </label>
-        <label>
-          <span>{text.labels.feishuAppSecret}</span>
-          <input
-            type="password"
-            value={formState.feishuAppSecret}
-            onChange={(event) => patchSettings({ feishuAppSecret: event.target.value })}
-          />
-        </label>
-        <label>
-          <span>{text.labels.feishuBitableAppToken}</span>
-          <input
-            value={formState.feishuBitableAppToken}
-            onChange={(event) => patchSettings({ feishuBitableAppToken: event.target.value })}
-          />
-        </label>
-        <label>
-          <span>{text.labels.feishuBitableTableId}</span>
-          <input
-            value={formState.feishuBitableTableId}
-            onChange={(event) => patchSettings({ feishuBitableTableId: event.target.value })}
-          />
-          <small className="helper">{text.hints.feishuToken}</small>
-        </label>
-        <label>
-          <span>{text.labels.feishuUploadParentType}</span>
-          <input
-            value={formState.feishuUploadParentType}
-            onChange={(event) => patchSettings({ feishuUploadParentType: event.target.value })}
-          />
-          <small className="helper">{text.hints.feishuParentType}</small>
-        </label>
-        <label>
-          <span>{text.labels.feishuFieldMappingJson}</span>
-          <div className="button-row">
-            <button className="ghost-button mini-button" onClick={handleFillRecommendedMapping} type="button">
-              {text.actions.fillRecommendedMapping}
-            </button>
-            <button className="ghost-button mini-button" onClick={handleFormatMapping} type="button">
-              {text.actions.formatMapping}
-            </button>
+    <form className="settings-form-panel settings-form-shell" onSubmit={handleSubmit}>
+      <div className="settings-overview-grid">
+        <section className="panel settings-section settings-card">
+          <div className="settings-section-header">
+            <h3>{text.sections.gemini}</h3>
+            <aside className="settings-guide-card">
+              <strong>{text.guides.title}</strong>
+              <ul>
+                {text.guides.gemini.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </aside>
           </div>
-          <textarea
-            rows={12}
-            placeholder={recommendedFeishuMappingJson}
-            value={formState.feishuFieldMappingJson}
-            onChange={(event) => patchSettings({ feishuFieldMappingJson: event.target.value })}
-          />
-          <small className="helper">{text.hints.feishuMapping}</small>
-          <small className="helper">{text.hints.feishuSupportedFields}</small>
-        </label>
-        <div className="button-row">
-          <button className="ghost-button" disabled={isTestingFeishu} onClick={handleFeishuTest} type="button">
-            {isTestingFeishu ? text.actions.testingFeishu : text.actions.testFeishu}
-          </button>
+          <div className="settings-fields-grid">
+            <label className="settings-field-span-2">
+              <span>{text.labels.defaultApiKey}</span>
+              <input
+                type="password"
+                value={formState.defaultApiKey}
+                onChange={(event) => patchSettings({ defaultApiKey: event.target.value })}
+              />
+            </label>
+            <label className="settings-field-span-2">
+              <span>{text.labels.defaultApiBaseUrl}</span>
+              <input
+                placeholder="https://your-relay-host.example"
+                value={formState.defaultApiBaseUrl}
+                onChange={(event) => patchSettings({ defaultApiBaseUrl: event.target.value })}
+              />
+              <small className="helper">{text.hints.baseUrl}</small>
+            </label>
+            <label>
+              <span>{text.labels.defaultApiVersion}</span>
+              <input
+                value={formState.defaultApiVersion}
+                onChange={(event) => patchSettings({ defaultApiVersion: event.target.value })}
+              />
+              <small className="helper">{text.hints.version}</small>
+            </label>
+            <label>
+              <span>{text.labels.defaultTextModel}</span>
+              <input
+                value={formState.defaultTextModel}
+                onChange={(event) => patchSettings({ defaultTextModel: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>{text.labels.defaultImageModel}</span>
+              <input
+                value={formState.defaultImageModel}
+                onChange={(event) => patchSettings({ defaultImageModel: event.target.value })}
+              />
+            </label>
+            <label className="settings-field-span-2">
+              <span>{text.labels.defaultApiHeaders}</span>
+              <textarea
+                rows={4}
+                placeholder='{"Authorization":"Bearer your-key"}'
+                value={formState.defaultApiHeaders}
+                onChange={(event) => patchSettings({ defaultApiHeaders: event.target.value })}
+              />
+              <small className="helper">{text.hints.headers}</small>
+            </label>
+          </div>
+          <div className="settings-card-footer">
+            <button className="ghost-button" disabled={isTestingProvider} onClick={handleProviderTest} type="button">
+              {isTestingProvider ? text.actions.testingProvider : text.actions.testProvider}
+            </button>
+            {providerTestMessage ? <p className="helper">{providerTestMessage}</p> : null}
+          </div>
+        </section>
+
+        <section className="panel settings-section settings-card settings-card-compact">
+          <div className="settings-section-header">
+            <h3>{text.sections.storage}</h3>
+            <aside className="settings-guide-card">
+              <strong>{text.guides.title}</strong>
+              <ul>
+                {text.guides.storage.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </aside>
+          </div>
+          <div className="settings-fields-grid">
+            <label className="settings-field-span-2">
+              <span>{text.labels.storageDir}</span>
+              <input
+                value={formState.storageDir}
+                onChange={(event) => patchSettings({ storageDir: event.target.value })}
+              />
+              <small className="helper">{text.hints.storageDir}</small>
+            </label>
+            <label>
+              <span>{text.labels.maxConcurrency}</span>
+              <input
+                min={1}
+                max={6}
+                type="number"
+                value={formState.maxConcurrency}
+                onChange={(event) => patchSettings({ maxConcurrency: Number(event.target.value) || 1 })}
+              />
+              <small className="helper">{text.hints.maxConcurrency}</small>
+            </label>
+          </div>
+        </section>
+
+        <section className="panel settings-section settings-card settings-card-wide">
+          <div className="settings-section-header">
+            <h3>{text.sections.feishu}</h3>
+            <aside className="settings-guide-card">
+              <strong>{text.guides.title}</strong>
+              <ul>
+                {text.guides.feishu.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </aside>
+          </div>
+          <label className="settings-checkbox-row">
+            <input
+              checked={formState.feishuSyncEnabled}
+              onChange={(event) => patchSettings({ feishuSyncEnabled: event.target.checked })}
+              type="checkbox"
+            />
+            <span>{text.labels.feishuSyncEnabled}</span>
+          </label>
+          <small className="helper">{text.hints.feishuEnable}</small>
+          <div className="settings-fields-grid">
+            <label>
+              <span>{text.labels.feishuAppId}</span>
+              <input value={formState.feishuAppId} onChange={(event) => patchSettings({ feishuAppId: event.target.value })} />
+            </label>
+            <label>
+              <span>{text.labels.feishuAppSecret}</span>
+              <input
+                type="password"
+                value={formState.feishuAppSecret}
+                onChange={(event) => patchSettings({ feishuAppSecret: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>{text.labels.feishuBitableAppToken}</span>
+              <input
+                value={formState.feishuBitableAppToken}
+                onChange={(event) => patchSettings({ feishuBitableAppToken: event.target.value })}
+              />
+            </label>
+            <label>
+              <span>{text.labels.feishuBitableTableId}</span>
+              <input
+                value={formState.feishuBitableTableId}
+                onChange={(event) => patchSettings({ feishuBitableTableId: event.target.value })}
+              />
+              <small className="helper">{text.hints.feishuToken}</small>
+            </label>
+            <label className="settings-field-span-2">
+              <span>{text.labels.feishuUploadParentType}</span>
+              <input
+                value={formState.feishuUploadParentType}
+                onChange={(event) => patchSettings({ feishuUploadParentType: event.target.value })}
+              />
+              <small className="helper">{text.hints.feishuParentType}</small>
+            </label>
+            <label className="settings-field-span-2">
+              <span>{text.labels.feishuFieldMappingJson}</span>
+              <div className="button-row">
+                <button className="ghost-button mini-button" onClick={handleFillRecommendedMapping} type="button">
+                  {text.actions.fillRecommendedMapping}
+                </button>
+                <button className="ghost-button mini-button" onClick={handleFormatMapping} type="button">
+                  {text.actions.formatMapping}
+                </button>
+              </div>
+              <textarea
+                rows={12}
+                placeholder={recommendedFeishuMappingJson}
+                value={formState.feishuFieldMappingJson}
+                onChange={(event) => patchSettings({ feishuFieldMappingJson: event.target.value })}
+              />
+              <small className="helper">{text.hints.feishuMapping}</small>
+              <small className="helper">{text.hints.feishuSupportedFields}</small>
+            </label>
+          </div>
+          <div className="settings-card-footer">
+            <button className="ghost-button" disabled={isTestingFeishu} onClick={handleFeishuTest} type="button">
+              {isTestingFeishu ? text.actions.testingFeishu : text.actions.testFeishu}
+            </button>
+            {feishuTestMessage ? <p className="helper">{feishuTestMessage}</p> : null}
+          </div>
+        </section>
+      </div>
+
+      <section className="panel settings-submit-panel">
+        <div>
+          <strong>{text.actions.save}</strong>
+          <p className="helper">{text.hints.saveSummary}</p>
+          {message ? <p className="helper success-text">{message}</p> : null}
         </div>
-        {feishuTestMessage ? <p className="helper">{feishuTestMessage}</p> : null}
-      </div>
-
-      <div className="settings-section">
-        <label>
-          <span>{text.labels.storageDir}</span>
-          <input value={formState.storageDir} onChange={(event) => patchSettings({ storageDir: event.target.value })} />
-        </label>
-        <label>
-          <span>{text.labels.maxConcurrency}</span>
-          <input
-            min={1}
-            max={6}
-            type="number"
-            value={formState.maxConcurrency}
-            onChange={(event) => patchSettings({ maxConcurrency: Number(event.target.value) || 1 })}
-          />
-        </label>
-      </div>
-
-      {message ? <p className="helper success-text">{message}</p> : null}
-
-      <div className="button-row">
         <button className="primary-button" disabled={isPending} type="submit">
           {isPending ? text.actions.saving : text.actions.save}
         </button>
-      </div>
+      </section>
     </form>
   );
 }

@@ -4,6 +4,7 @@ import type {
   JobDetails,
   JobItemRecord,
   ProviderOverride,
+  ReferenceCopyMode,
   ReferenceLayoutAnalysis,
   ReferencePosterCopy,
   UiLanguage,
@@ -76,6 +77,7 @@ export interface CreatePayload {
   creationMode?: "standard" | "reference-remix" | "prompt" | "suite" | "amazon-a-plus";
   referenceStrength?: "reference" | "balanced" | "product";
   preserveReferenceText?: boolean;
+  referenceCopyMode?: ReferenceCopyMode;
   productName: string;
   sku: string;
   brandName: string;
@@ -87,6 +89,7 @@ export interface CreatePayload {
   sizeInfo?: string;
   customPrompt?: string;
   customNegativePrompt?: string;
+  translatePromptToOutputLanguage?: boolean;
   autoOptimizePrompt?: boolean;
   referenceExtraPrompt?: string;
   referenceNegativePrompt?: string;
@@ -103,6 +106,28 @@ export interface CreatePayload {
   referenceLayoutOverride?: ReferenceLayoutAnalysis | null;
   referencePosterCopyOverride?: ReferencePosterCopy | null;
   temporaryProvider?: ProviderOverride;
+}
+
+function normalizeCreatePayload(payload: CreatePayload): CreatePayload {
+  if (payload.creationMode !== "reference-remix") {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    referenceStrength: "reference",
+    preserveReferenceText: true,
+    referenceCopyMode: payload.referenceCopyMode === "copy-sheet" ? "copy-sheet" : "reference",
+    referenceExtraPrompt: "",
+    referenceNegativePrompt: "",
+    selectedTypes: ["scene"],
+    selectedRatios: payload.selectedRatios.length ? [payload.selectedRatios[0]] : ["1:1"],
+    selectedResolutions: payload.selectedResolutions.length ? [payload.selectedResolutions[0]] : ["4K"],
+    includeCopyLayout: false,
+    selectedTemplateOverrides: {},
+    referenceLayoutOverride: null,
+    referencePosterCopyOverride: null,
+  };
 }
 
 export function buildJobItems(sourceAssets: AssetRecord[], payload: CreatePayload, jobId: string): JobItemRecord[] {
@@ -163,44 +188,49 @@ export function buildCreateJobInput(
   jobId = createId("job"),
   referenceAssets: AssetRecord[] = [],
 ): CreateJobInput {
-  const items = buildJobItems(sourceAssets, payload, jobId);
+  const normalizedPayload = normalizeCreatePayload(payload);
+  const normalizedReferenceAssets =
+    normalizedPayload.creationMode === "reference-remix" ? referenceAssets.slice(0, 1) : referenceAssets;
+  const items = buildJobItems(sourceAssets, normalizedPayload, jobId);
 
   return {
     id: jobId,
-    creationMode: payload.creationMode ?? "standard",
-    referenceStrength: payload.referenceStrength ?? "balanced",
-    preserveReferenceText: payload.preserveReferenceText ?? true,
-    productName: inferJobName(payload, sourceAssets, referenceAssets),
-    sku: payload.sku,
-    category: payload.category,
-    brandName: payload.brandName,
-    sellingPoints: payload.sellingPoints,
-    restrictions: payload.restrictions,
-    customPrompt: payload.customPrompt ?? "",
-    customNegativePrompt: payload.customNegativePrompt ?? "",
-    autoOptimizePrompt: payload.autoOptimizePrompt ?? false,
-    country: payload.country,
-    language: payload.language,
-    platform: payload.platform,
-    referenceExtraPrompt: payload.referenceExtraPrompt ?? "",
-    referenceNegativePrompt: payload.referenceNegativePrompt ?? "",
-    selectedTypes: payload.selectedTypes,
-    selectedRatios: payload.selectedRatios,
-    selectedResolutions: payload.selectedResolutions,
-    variantsPerType: payload.variantsPerType,
-    includeCopyLayout: payload.includeCopyLayout,
+    creationMode: normalizedPayload.creationMode ?? "standard",
+    referenceStrength: normalizedPayload.referenceStrength ?? "balanced",
+    preserveReferenceText: normalizedPayload.preserveReferenceText ?? true,
+    referenceCopyMode: normalizedPayload.referenceCopyMode ?? "reference",
+    productName: inferJobName(normalizedPayload, sourceAssets, referenceAssets),
+    sku: normalizedPayload.sku,
+    category: normalizedPayload.category,
+    brandName: normalizedPayload.brandName,
+    sellingPoints: normalizedPayload.sellingPoints,
+    restrictions: normalizedPayload.restrictions,
+    customPrompt: normalizedPayload.customPrompt ?? "",
+    customNegativePrompt: normalizedPayload.customNegativePrompt ?? "",
+    translatePromptToOutputLanguage: normalizedPayload.translatePromptToOutputLanguage ?? false,
+    autoOptimizePrompt: normalizedPayload.autoOptimizePrompt ?? false,
+    country: normalizedPayload.country,
+    language: normalizedPayload.language,
+    platform: normalizedPayload.platform,
+    referenceExtraPrompt: normalizedPayload.referenceExtraPrompt ?? "",
+    referenceNegativePrompt: normalizedPayload.referenceNegativePrompt ?? "",
+    selectedTypes: normalizedPayload.selectedTypes,
+    selectedRatios: normalizedPayload.selectedRatios,
+    selectedResolutions: normalizedPayload.selectedResolutions,
+    variantsPerType: normalizedPayload.variantsPerType,
+    includeCopyLayout: false,
     batchFileCount: sourceAssets.length,
     sourceDescription: buildCompositeSourceDescription({
-      sourceDescription: payload.sourceDescription,
-      materialInfo: payload.materialInfo,
-      sizeInfo: payload.sizeInfo,
+      sourceDescription: normalizedPayload.sourceDescription,
+      materialInfo: normalizedPayload.materialInfo,
+      sizeInfo: normalizedPayload.sizeInfo,
     }),
-    uiLanguage: payload.uiLanguage,
-    selectedTemplateOverrides: payload.selectedTemplateOverrides ?? {},
-    referenceLayoutOverride: payload.referenceLayoutOverride ?? null,
-    referencePosterCopyOverride: payload.referencePosterCopyOverride ?? null,
+    uiLanguage: normalizedPayload.uiLanguage,
+    selectedTemplateOverrides: normalizedPayload.selectedTemplateOverrides ?? {},
+    referenceLayoutOverride: normalizedPayload.referenceLayoutOverride ?? null,
+    referencePosterCopyOverride: normalizedPayload.referencePosterCopyOverride ?? null,
     sourceAssets: sourceAssets.map((asset) => ({ ...asset, jobId })),
-    referenceAssets: referenceAssets.map((asset) => ({ ...asset, jobId })),
+    referenceAssets: normalizedReferenceAssets.map((asset) => ({ ...asset, jobId })),
     items,
   };
 }
@@ -228,6 +258,7 @@ export function buildRetryJobInput(details: JobDetails): CreateJobInput {
       creationMode: details.job.creationMode,
       referenceStrength: details.job.referenceStrength,
       preserveReferenceText: details.job.preserveReferenceText,
+      referenceCopyMode: details.job.referenceCopyMode,
       productName: details.job.productName,
       sku: details.job.sku,
       brandName: details.job.brandName,
@@ -237,6 +268,7 @@ export function buildRetryJobInput(details: JobDetails): CreateJobInput {
       sourceDescription: details.job.sourceDescription,
       customPrompt: details.job.customPrompt,
       customNegativePrompt: details.job.customNegativePrompt,
+      translatePromptToOutputLanguage: details.job.translatePromptToOutputLanguage,
       autoOptimizePrompt: details.job.autoOptimizePrompt,
       referenceExtraPrompt: details.job.referenceExtraPrompt,
       referenceNegativePrompt: details.job.referenceNegativePrompt,
@@ -247,7 +279,7 @@ export function buildRetryJobInput(details: JobDetails): CreateJobInput {
       selectedRatios: details.job.selectedRatios,
       selectedResolutions: details.job.selectedResolutions,
       variantsPerType: details.job.variantsPerType,
-      includeCopyLayout: details.job.includeCopyLayout,
+      includeCopyLayout: false,
       uiLanguage: details.job.uiLanguage,
       selectedTemplateOverrides: details.job.selectedTemplateOverrides,
       referenceLayoutOverride: details.job.referenceLayoutOverride,

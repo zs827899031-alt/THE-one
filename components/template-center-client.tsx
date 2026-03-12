@@ -290,32 +290,40 @@ export function TemplateCenterClient({ initialTemplates, language }: { initialTe
   };
 
   return (
-    <div className="stack gap-24">
-      <section className="panel">
-        <p className="eyebrow">Template System</p>
-        <h2>{language === "zh" ? "模板中心" : "Template center"}</h2>
-        <p>{text.subtitle}</p>
-        <div className="stats-grid template-summary-grid">
-          <article className="stat-card">
-            <span>{text.total}</span>
-            <strong>{templates.length}</strong>
-          </article>
-          <article className="stat-card">
-            <span>{text.defaults}</span>
-            <strong>{summary.defaults}</strong>
-          </article>
-          <article className="stat-card">
-            <span>{text.custom}</span>
-            <strong>{summary.custom}</strong>
-          </article>
-          <article className="stat-card">
-            <span>{text.platforms}</span>
-            <strong>{summary.platformCount}</strong>
-          </article>
+    <div className="stack gap-24 template-center-page">
+      <section className="panel page-hero">
+        <div className="page-hero-copy">
+          <p className="eyebrow">Template System</p>
+          <h2>{language === "zh" ? "模板中心" : "Template center"}</h2>
+          <p>{text.subtitle}</p>
+        </div>
+        <div className="page-hero-meta">
+          <div className="page-kpi-grid">
+            <article className="page-kpi">
+              <span>{text.total}</span>
+              <strong>{templates.length}</strong>
+              <p>{language === "zh" ? "当前模板系统的总规则数" : "All rules currently available in the template system"}</p>
+            </article>
+            <article className="page-kpi">
+              <span>{text.defaults}</span>
+              <strong>{summary.defaults}</strong>
+              <p>{language === "zh" ? "随系统分发的默认模板" : "Shipped defaults maintained by the system"}</p>
+            </article>
+            <article className="page-kpi">
+              <span>{text.custom}</span>
+              <strong>{summary.custom}</strong>
+              <p>{language === "zh" ? "团队自行维护的定制策略" : "Custom strategies created by the team"}</p>
+            </article>
+            <article className="page-kpi">
+              <span>{text.platforms}</span>
+              <strong>{summary.platformCount}</strong>
+              <p>{language === "zh" ? "已覆盖的平台口径" : "Platform scopes currently covered"}</p>
+            </article>
+          </div>
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel panel-stack">
         <div className="split-header compact">
           <div>
             <h3>{text.filters}</h3>
@@ -418,7 +426,7 @@ export function TemplateCenterClient({ initialTemplates, language }: { initialTe
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel panel-stack">
         <div className="split-header compact">
           <div>
             <h3>{text.editor}</h3>
